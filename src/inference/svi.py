@@ -60,10 +60,20 @@ class SVITrainer:
         progress = Progress()
         task = progress.add_task("svi", total=self.config.steps)
         eval_history: List[Dict[str, float]] = []
+        try:
+            device = next(self.model.parameters()).device
+        except StopIteration:
+            device = torch.device("cpu")
+
         with progress:
             for step in range(1, self.config.steps + 1):
                 batch = next(iterator)
-                loss = self.svi.step(batch["y"], batch.get("lengths"))
+                y = batch["y"].to(device)
+                lengths = batch.get("lengths")
+                if lengths is not None:
+                    lengths = lengths.to(device)
+
+                loss = self.svi.step(y, lengths)
                 progress.advance(task)
                 if step % self.config.report_every == 0:
                     progress.log(f"step={step} loss={loss:.2f}")

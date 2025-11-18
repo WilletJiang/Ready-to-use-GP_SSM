@@ -7,7 +7,10 @@ import pyro
 import torch
 import typer
 import yaml
+import os
 from rich.console import Console
+if torch.backends.mps.is_available():
+    os.environ["PYTORCH_ENABLE_MPS_FALLBACK"] = "1"
 
 from data.timeseries import (
     TimeseriesWindowDataset,
@@ -40,6 +43,29 @@ def _seed_everything(seed: int) -> None:
     pyro.util.set_rng_seed(seed)
 
 
+def _cholesky_supported(device: torch.device) -> bool:
+    eye = torch.eye(2, device=device)
+    try:
+        torch.linalg.cholesky(eye)
+        return True
+    except RuntimeError:
+        return False
+
+
+def _select_device(console: Console) -> torch.device:
+    if torch.backends.mps.is_available():
+        device = torch.device("mps")
+        if _cholesky_supported(device):
+            return device
+        console.print(
+            "MPS backend lacks torch.linalg.cholesky; falling back to CPU.",
+            style="bold yellow",
+        )
+    if torch.cuda.is_available():
+        return torch.device("cuda")
+    return torch.device("cpu")
+
+
 @app.command()
 def train(config: Path = typer.Option(..., exists=True, dir_okay=False)) -> None:
     cfg = _load_config(config)
@@ -47,6 +73,9 @@ def train(config: Path = typer.Option(..., exists=True, dir_okay=False)) -> None
     model_cfg = cfg["model"]
     data_cfg = cfg.get("synthetic_data", cfg.get("data", {}))
     _seed_everything(trainer_cfg["seed"])
+    device = _select_device(console)
+    console.print(f"Using device: {device}", style="bold green")
+
     kernel = ARDRBFKernel(input_dim=model_cfg["state_dim"], jitter=model_cfg["kernel"]["jitter"])
     transition = SparseGPTransition(
         state_dim=model_cfg["state_dim"],
@@ -67,6 +96,7 @@ def train(config: Path = typer.Option(..., exists=True, dir_okay=False)) -> None
         process_noise_init=model_cfg["process_noise_init"],
         obs_noise_init=model_cfg["obs_noise_init"],
     )
+    model.to(device)
     dataset_type = data_cfg.get("type", "toy")
     if dataset_type == "toy":
         full_dataset = generate_synthetic_sequences(
@@ -149,8 +179,8 @@ def train(config: Path = typer.Option(..., exists=True, dir_okay=False)) -> None
     test_metrics = evaluate_model(model, test_loader)
     console.print(test_metrics)
     if splits["test"].observations.size(0) > 0:
-        sample = splits["test"].observations[:1]
-        sample_lengths = splits["test"].lengths[:1]
+        sample = splits["test"].observations[:1].to(device)
+        sample_lengths = splits["test"].lengths[:1].to(device)
         context = max(1, min(trainer_cfg["window_length"], sample.size(1) // 2))
         forecast_horizon = data_cfg.get("forecast_horizon", 16)
         context_tensor = sample[:, :context, :]

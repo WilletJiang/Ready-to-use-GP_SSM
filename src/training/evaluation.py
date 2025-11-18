@@ -23,20 +23,25 @@ def evaluate_model(model, loader) -> Dict[str, float]:
     latent_count = 0
     obs_dim = model.obs_dim
     state_dim = model.state_dim
+    try:
+        device = next(model.parameters()).device
+    except StopIteration:
+        device = torch.device("cpu")
+
     with torch.no_grad():
         for batch in loader:
-            y = batch["y"]
-            lengths = batch["lengths"]
+            y = batch["y"].to(device)
+            lengths = batch["lengths"].to(device)
             encoding = model.encoder(y, lengths)
             loc = encoding.loc
             batch_size, horizon, _ = loc.shape
-            mask = _mask_from_lengths(lengths, horizon).to(y.device).unsqueeze(-1)
+            mask = _mask_from_lengths(lengths, horizon).to(device).unsqueeze(-1)
             flat_loc = loc.reshape(batch_size * horizon, state_dim)
             obs_pred = model.observation(flat_loc).reshape(batch_size, horizon, obs_dim)
             diff = y - obs_pred
             rmse_sum += (diff.pow(2) * mask).sum().item()
             obs_count += mask.sum().item() * obs_dim
-            obs_noise = model._obs_noise().detach().to(y.device)
+            obs_noise = model._obs_noise().detach().to(device)
             var = obs_noise.pow(2)
             log_norm = torch.log(2 * math.pi * var)
             nll = 0.5 * (
@@ -44,7 +49,7 @@ def evaluate_model(model, loader) -> Dict[str, float]:
             )
             nll_sum += (nll * mask).sum().item()
             if "latents" in batch:
-                lat = batch["latents"]
+                lat = batch["latents"].to(device)
                 latent_diff = loc - lat
                 latent_rmse_sum += (latent_diff.pow(2) * mask).sum().item()
                 latent_count += mask.sum().item() * state_dim

@@ -6,9 +6,43 @@ import torch
 from pyro import distributions as dist
 from pyro.nn import PyroModule
 from torch import Tensor, nn
+import sys
 
 from .kernels import ARDRBFKernel
 
+def torch_compile(func):
+    if sys.version_info >= (3, 13):
+        try:
+            return torch.jit.script(func)
+        except Exception:
+            return func
+    else:
+        try:
+            from torch import compile as c
+            return c(func)
+        except ImportError:
+            return func
+
+@torch_compile
+def _transition_forward_compute(
+    kxz: Tensor,
+    diag: Tensor,
+    chol: Tensor,
+    solved_u: Tensor
+) -> Tuple[Tensor, Tensor]:
+
+    mean = kxz @ solved_u
+    kxz_t = kxz.transpose(-2, -1) # [..., M, N]
+    v = torch.linalg.solve_triangular(chol, kxz_t, upper=False)
+    quad_form = v.pow(2).sum(dim=-2)
+    var_scalar = diag - quad_form
+    var_scalar = var_scalar.clamp_min(1e-6)
+    var = var_scalar.unsqueeze(-1).expand_as(mean)
+    return mean, var
+
+@torch_compile
+def _precompute_chol_solve(chol: Tensor, u_t: Tensor) -> Tensor:
+    return torch.cholesky_solve(u_t, chol)
 
 class SparseGPTransition(PyroModule):
     def __init__(
@@ -49,16 +83,13 @@ class SparseGPTransition(PyroModule):
         chol = torch.linalg.cholesky(kzz)
         return kzz, chol
 
-    def _chol_solve(self, chol: Tensor, rhs: Tensor) -> Tensor:
-        return torch.cholesky_solve(rhs, chol)
-
     def precompute(self, u: Tensor, chol: Optional[Tensor] = None) -> Tuple[Tensor, Tensor]:
         """
         Precompute Kzz cholesky and solved_u for reuse across many time steps.
         """
         if chol is None:
             _, chol = self._kzz_and_chol()
-        solved_u = self._chol_solve(chol, u.T)
+        solved_u = _precompute_chol_solve(chol, u.T)
         return chol, solved_u
 
     def forward(
@@ -70,12 +101,8 @@ class SparseGPTransition(PyroModule):
         evals = self.kernel.evaluate_cross(x_prev, self.inducing_points)
         if cache is None:
             kzz, chol = self._kzz_and_chol()
-            solved_u = self._chol_solve(chol, u.T)
+            solved_u = _precompute_chol_solve(chol, u.T)
         else:
             chol, solved_u = cache
-        mean = evals.kxz @ solved_u
-        solved_kxz = self._chol_solve(chol, evals.kxz.transpose(-2, -1))
-        var_scalar = evals.diag - (evals.kxz * solved_kxz.transpose(-2, -1)).sum(dim=-1)
-        var_scalar = var_scalar.clamp_min(1e-6)
-        var = var_scalar.unsqueeze(-1).expand_as(mean)
-        return mean, var
+
+        return _transition_forward_compute(evals.kxz, evals.diag, chol, solved_u)
