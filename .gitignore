@@ -1,0 +1,4 @@
+# Build metadata (do not track)
+*.egg-info/
+
+
