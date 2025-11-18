@@ -41,15 +41,16 @@ def generate_synthetic_sequences(
     obs_matrix = torch.randn(obs_dim, state_dim, device=device) * observation_gain
     proc_noise = torch.distributions.Normal(0.0, math.sqrt(process_noise))
     obs_noise_dist = torch.distributions.Normal(0.0, math.sqrt(obs_noise))
-    for n in range(num_sequences):
-        x_prev = torch.randn(state_dim, device=device) * 0.1
-        for t in range(sequence_length):
-            drift = _sinusoidal_drift(x_prev.unsqueeze(0), weight).squeeze(0)
-            x_curr = x_prev + 0.1 * drift + proc_noise.sample((state_dim,)).to(device)
-            y = obs_matrix @ x_curr + obs_noise_dist.sample((obs_dim,)).to(device)
-            latents[n, t] = x_curr
-            sequences[n, t] = y
-            x_prev = x_curr
+    # Vectorize across sequences to remove outer Python loop
+    x_prev = torch.randn(num_sequences, state_dim, device=device) * 0.1
+    for t in range(sequence_length):
+        drift = _sinusoidal_drift(x_prev, weight)
+        noise = proc_noise.sample((num_sequences, state_dim)).to(device)
+        x_curr = x_prev + 0.1 * drift + noise
+        y = x_curr @ obs_matrix.T + obs_noise_dist.sample((num_sequences, obs_dim)).to(device)
+        latents[:, t] = x_curr
+        sequences[:, t] = y
+        x_prev = x_curr
     return SequenceDataset(observations=sequences, lengths=lengths, latents=latents)
 
 
@@ -87,18 +88,22 @@ def generate_system_identification_sequences(
     obs_noise_dist = torch.distributions.Normal(0.0, math.sqrt(obs_noise))
     freqs = torch.rand(state_dim, generator=generator, device=device) * 0.5 + 0.2
     phases = torch.rand(state_dim, generator=generator, device=device) * 2 * math.pi
-    for n in range(num_sequences):
-        x_prev = torch.randn(state_dim, device=device, generator=generator) * 0.1
-        for t in range(sequence_length):
-            control = control_scale * torch.sin(freqs * (t * dt) + phases)
-            drift = lin @ x_prev + torch.tanh(nonlin @ x_prev) + control_mat @ control
-            noise = proc_noise.sample((state_dim,)).to(device)
-            x_curr = x_prev + dt * drift + noise
-            x_curr = torch.clamp(x_curr, -3.0, 3.0)
-            y = obs_mat @ torch.tanh(x_curr) + obs_noise_dist.sample((obs_dim,)).to(device)
-            latents[n, t] = x_curr
-            obs[n, t] = y
-            x_prev = x_curr
+    # Vectorize across sequences; keep temporal recursion
+    x_prev = torch.randn(num_sequences, state_dim, device=device, generator=generator) * 0.1
+    for t in range(sequence_length):
+        control = control_scale * torch.sin(freqs * (t * dt) + phases)  # [state_dim]
+        # drift = lin @ x_prev + tanh(nonlin @ x_prev) + control_mat @ control
+        drift_lin = x_prev @ lin.T
+        drift_nonlin = torch.tanh(x_prev @ nonlin.T)
+        control_term = control.unsqueeze(0) @ control_mat.T  # [1, state_dim]
+        drift = drift_lin + drift_nonlin + control_term
+        noise = proc_noise.sample((num_sequences, state_dim)).to(device)
+        x_curr = x_prev + dt * drift + noise
+        x_curr = torch.clamp(x_curr, -3.0, 3.0)
+        y = torch.tanh(x_curr) @ obs_mat.T + obs_noise_dist.sample((num_sequences, obs_dim)).to(device)
+        latents[:, t] = x_curr
+        obs[:, t] = y
+        x_prev = x_curr
     return SequenceDataset(observations=obs, lengths=lengths, latents=latents)
 
 

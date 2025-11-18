@@ -3,18 +3,18 @@ import math
 import pyro
 import torch
 
-from spde_gp_kernel.data.timeseries import (
+from data.timeseries import (
     TimeseriesWindowDataset,
     build_dataloader,
     generate_synthetic_sequences,
     generate_system_identification_sequences,
     split_dataset,
 )
-from spde_gp_kernel.inference.svi import SVITrainer, TrainerConfig
-from spde_gp_kernel.models.encoder import StateEncoder
-from spde_gp_kernel.models.gp_ssm import SparseVariationalGPSSM
-from spde_gp_kernel.models.kernels import ARDRBFKernel
-from spde_gp_kernel.models.transition import SparseGPTransition
+from inference.svi import SVITrainer, TrainerConfig
+from models.encoder import StateEncoder
+from models.gp_ssm import SparseVariationalGPSSM
+from models.kernels import ARDRBFKernel
+from models.transition import SparseGPTransition
 
 
 def test_kernel_shapes() -> None:

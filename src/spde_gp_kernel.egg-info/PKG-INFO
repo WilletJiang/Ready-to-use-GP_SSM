@@ -1,3 +1,22 @@
+Metadata-Version: 2.4
+Name: spde-gp-kernel
+Version: 0.1.0
+Summary: Sparse variational GP state-space models with PyTorch
+Author: Taylor Mason
+Requires-Python: >=3.10
+Description-Content-Type: text/markdown
+Requires-Dist: torch<2.3.0,>=2.2.0
+Requires-Dist: pyro-ppl<1.10,>=1.9.1
+Requires-Dist: numpy>=1.26
+Requires-Dist: pyyaml>=6.0
+Requires-Dist: typer>=0.12
+Requires-Dist: rich>=13.7
+Provides-Extra: dev
+Requires-Dist: pytest>=8.3; extra == "dev"
+Requires-Dist: black>=24.4; extra == "dev"
+Requires-Dist: ruff>=0.5; extra == "dev"
+Requires-Dist: mypy>=1.10; extra == "dev"
+
 # SPDE-GP Kernel Lab
 
 构建一个**稀疏高斯过程状态空间模型（GP-SSM）**，以随机变分推断（SVI）高效学习非线性动力学。核心思想遵循 Frigola 等人在 *Variational Gaussian Process State-Space Models* (NIPS 2014) 中提出的诱导点扩展与自适应识别网络，通过 PyTorch 生态（torch + pyro）落地企业级工程。

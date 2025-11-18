@@ -75,9 +75,10 @@ def rollout_forecast(model, y_hist: Tensor, lengths: Tensor, steps: int) -> Tens
             model.state_dim,
             model.transition.num_inducing,
         ).to(x_prev.device)
+        cache = model.transition.precompute(u_mean)
         preds = []
         for _ in range(steps):
-            mean, _ = model.transition(x_prev, u_mean)
+            mean, _ = model.transition(x_prev, u_mean, cache)
             obs_pred = model.observation(mean)
             preds.append(obs_pred.unsqueeze(1))
             x_prev = mean

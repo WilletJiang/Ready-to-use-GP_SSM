@@ -72,6 +72,7 @@ class SparseVariationalGPSSM(PyroModule):
         batch_size, horizon, _ = y.shape
         u_sample = pyro.sample("u", self.transition.prior())
         u = u_sample.reshape(self.state_dim, self.transition.num_inducing)
+        cache = self.transition.precompute(u)
         init_loc = self.x0_loc.unsqueeze(0).expand(batch_size, -1)
         init_cov = self._diag_embed(self._x0_scale().pow(2)).expand(
             batch_size,
@@ -84,7 +85,7 @@ class SparseVariationalGPSSM(PyroModule):
                 dist.MultivariateNormal(init_loc, covariance_matrix=init_cov),
             )
             for t in range(horizon):
-                mean, var = self.transition(x_prev, u)
+                mean, var = self.transition(x_prev, u, cache)
                 cov = self._diag_embed(var + self._process_noise())
                 x_curr = pyro.sample(
                     f"x_{t+1}",

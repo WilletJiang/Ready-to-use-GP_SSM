@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from typing import Tuple
+from typing import Optional, Tuple
 
 import torch
 from pyro import distributions as dist
@@ -38,16 +38,36 @@ class SparseGPTransition(PyroModule):
         loc = torch.zeros(self.u_dim, device=kzz.device, dtype=kzz.dtype)
         return dist.MultivariateNormal(loc, covariance_matrix=cov)
 
-    def _chol_solve(self, kzz: Tensor, rhs: Tensor) -> Tensor:
+    def _kzz_and_chol(self) -> Tuple[Tensor, Tensor]:
+        kzz = self.kernel.gram(self.inducing_points)
         chol = torch.linalg.cholesky(kzz)
+        return kzz, chol
+
+    def _chol_solve(self, chol: Tensor, rhs: Tensor) -> Tensor:
         return torch.cholesky_solve(rhs, chol)
 
-    def forward(self, x_prev: Tensor, u: Tensor) -> Tuple[Tensor, Tensor]:
+    def precompute(self, u: Tensor) -> Tuple[Tensor, Tensor]:
+        """
+        Precompute Kzz cholesky and solved_u for reuse across many time steps.
+        """
+        kzz, chol = self._kzz_and_chol()
+        solved_u = self._chol_solve(chol, u.T)
+        return chol, solved_u
+
+    def forward(
+        self,
+        x_prev: Tensor,
+        u: Tensor,
+        cache: Optional[Tuple[Tensor, Tensor]] = None,
+    ) -> Tuple[Tensor, Tensor]:
         evals = self.kernel.evaluate_cross(x_prev, self.inducing_points)
-        kzz = self.kernel.gram(self.inducing_points)
-        solved_u = self._chol_solve(kzz, u.T)
+        if cache is None:
+            kzz, chol = self._kzz_and_chol()
+            solved_u = self._chol_solve(chol, u.T)
+        else:
+            chol, solved_u = cache
         mean = evals.kxz @ solved_u
-        solved_kxz = self._chol_solve(kzz, evals.kxz.transpose(-2, -1))
+        solved_kxz = self._chol_solve(chol, evals.kxz.transpose(-2, -1))
         var_scalar = evals.diag - (evals.kxz * solved_kxz.transpose(-2, -1)).sum(dim=-1)
         var_scalar = var_scalar.clamp_min(1e-6)
         var = var_scalar.unsqueeze(-1).expand_as(mean)

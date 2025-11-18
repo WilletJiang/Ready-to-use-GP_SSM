@@ -9,19 +9,19 @@ import typer
 import yaml
 from rich.console import Console
 
-from spde_gp_kernel.data.timeseries import (
+from data.timeseries import (
     TimeseriesWindowDataset,
     build_dataloader,
     generate_system_identification_sequences,
     generate_synthetic_sequences,
     split_dataset,
 )
-from spde_gp_kernel.inference.svi import SVITrainer, TrainerConfig
-from spde_gp_kernel.models.encoder import StateEncoder
-from spde_gp_kernel.models.gp_ssm import SparseVariationalGPSSM
-from spde_gp_kernel.models.kernels import ARDRBFKernel
-from spde_gp_kernel.models.transition import SparseGPTransition
-from spde_gp_kernel.training.evaluation import evaluate_model, rollout_forecast
+from inference.svi import SVITrainer, TrainerConfig
+from models.encoder import StateEncoder
+from models.gp_ssm import SparseVariationalGPSSM
+from models.kernels import ARDRBFKernel
+from models.transition import SparseGPTransition
+from training.evaluation import evaluate_model, rollout_forecast
 
 app = typer.Typer(add_completion=False)
 console = Console()
