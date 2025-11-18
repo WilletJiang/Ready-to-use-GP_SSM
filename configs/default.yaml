@@ -1,0 +1,36 @@
+trainer:
+  seed: 42
+  steps: 2000
+  lr: 5.0e-3
+  batch_size: 8
+  window_length: 64
+  gradient_clip: 5.0
+  elbo: trace
+  report_every: 50
+  eval_every: 200
+  checkpoint_dir: .checkpoints
+
+model:
+  state_dim: 4
+  obs_dim: 2
+  inducing_points: 32
+  kernel:
+    jitter: 1.0e-5
+  process_noise_init: 0.05
+  obs_noise_init: 0.1
+  encoder_hidden: 64
+  encoder_layers: 2
+
+synthetic_data:
+  type: toy
+  num_sequences: 64
+  sequence_length: 256
+  observation_gain: 1.5
+  process_noise: 0.05
+  obs_noise: 0.1
+  splits:
+    train: 0.7
+    val: 0.15
+    test: 0.15
+  eval_window_length: 256
+  forecast_horizon: 32

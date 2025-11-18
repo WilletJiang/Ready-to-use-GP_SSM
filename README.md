@@ -1,0 +1,44 @@
+# SPDE-GP Kernel Lab
+
+构建一个**稀疏高斯过程状态空间模型（GP-SSM）**，以随机变分推断（SVI）高效学习非线性动力学。核心思想遵循 Frigola 等人在 *Variational Gaussian Process State-Space Models* (NIPS 2014) 中提出的诱导点扩展与自适应识别网络，通过 PyTorch 生态（torch + pyro）落地企业级工程。
+
+## Features
+- **Sparse GP transition**：诱导点矩阵场 + ARD RBF 核，复杂度压到 `O(M^2)`。
+- **随机变分推断**：Pyro `SVI` + amortized guide，支持子序列 mini-batch。
+- **可组合观测头**：默认仿射观测，可替换为任意 `nn.Module`。
+- **配置化训练 & 评估**：`configs/*.yaml` 描述数据生成、拆分、训练与验证频率，脚本自动验收 RMSE/NLL + 递推预测误差。
+- **企业工程基线**：`pyproject`、`Makefile`、`docs/architecture.md`、单元测试、typing-ready 目录结构。
+
+## Quickstart
+```bash
+python -m venv .venv
+source .venv/bin/activate
+pip install -e .[dev]
+make test
+python scripts/train_gp_ssm.py --config configs/default.yaml
+
+# 运行中等规模系统辨识
+使用基于非线性受控系统的生成器：
+
+```bash
+conda activate /Users/willet/Downloads/SPDE_GP_kernel/.conda/spdegp  # 或你的虚拟环境
+python scripts/train_gp_ssm.py --config configs/system_id_medium.yaml
+```
+
+脚本会：
+1. 生成 192 条、每条 240 步的非线性系统序列并做 7/1.5/1.5 拆分。
+2. 用 48 个诱导点、BiGRU guide 的 GP-SSM 训练 1,800 SVI steps。
+3. 每 200 step 在验证集输出 RMSE/NLL、收敛后给出验证/测试指标与 40 步前向预测 RMSE。
+```
+
+## Repository Layout
+- `src/spde_gp_kernel/models/`：核函数、稀疏 GP 转移模块、观测头。
+- `src/spde_gp_kernel/inference/`：SVI 训练器与 guider。
+- `src/spde_gp_kernel/data/`：时间序列窗口化与加载工具。
+- `docs/architecture.md`：推断与数值细节。
+- `scripts/train_gp_ssm.py`：可执行训练入口。
+- `tests/`：形状/梯度 smoke tests。
+
+## References
+1. Frigola, Deisenroth, Rasmussen. *Variational Gaussian Process State-Space Models*, NIPS 2014.
+2. Pyro 1.9.x release notes（与 PyTorch 2.2 兼容）。
