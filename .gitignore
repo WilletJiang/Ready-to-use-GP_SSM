@@ -1,4 +1,14 @@
 # Build metadata (do not track)
 *.egg-info/
-
-
+.venv/
+.conda/
+.pytest_cache/
+.ruff_cache/
+.mypy_cache/
+.vscode/
+.idea/
+.pytest_cache/
+.ruff_cache/
+.mypy_cache/
+.DS_Store
+.checkpoints/

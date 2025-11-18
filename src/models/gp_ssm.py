@@ -53,9 +53,6 @@ class SparseVariationalGPSSM(PyroModule):
             torch.full((self.obs_dim,), torch.log(torch.tensor(obs_noise_init))),
         )
 
-    def _diag_embed(self, diag: Tensor) -> Tensor:
-        return torch.diag_embed(diag)
-
     def _process_noise(self) -> Tensor:
         return self.log_process_noise.exp() + self.min_noise
 
@@ -70,26 +67,25 @@ class SparseVariationalGPSSM(PyroModule):
         pyro.module("transition", self.transition)
         pyro.module("encoder", self.encoder)
         batch_size, horizon, _ = y.shape
-        u_sample = pyro.sample("u", self.transition.prior())
+        prior_dist, chol = self.transition.prior(return_chol=True)
+        u_sample = pyro.sample("u", prior_dist)
         u = u_sample.reshape(self.state_dim, self.transition.num_inducing)
-        cache = self.transition.precompute(u)
+        cache = self.transition.precompute(u, chol)
         init_loc = self.x0_loc.unsqueeze(0).expand(batch_size, -1)
-        init_cov = self._diag_embed(self._x0_scale().pow(2)).expand(
-            batch_size,
-            self.state_dim,
-            self.state_dim,
-        )
+        init_scale = self._x0_scale().unsqueeze(0).expand_as(init_loc)
         with pyro.plate("batch", batch_size):
             x_prev = pyro.sample(
                 "x_0",
-                dist.MultivariateNormal(init_loc, covariance_matrix=init_cov),
+                dist.Normal(init_loc, init_scale).to_event(1),
             )
             for t in range(horizon):
                 mean, var = self.transition(x_prev, u, cache)
-                cov = self._diag_embed(var + self._process_noise())
+                noise_var = self._process_noise()
+                total_var = var + noise_var
+                scale = total_var.clamp_min(self.min_noise).sqrt()
                 x_curr = pyro.sample(
                     f"x_{t+1}",
-                    dist.MultivariateNormal(mean, covariance_matrix=cov),
+                    dist.Normal(mean, scale).to_event(1),
                 )
                 obs_loc = self.observation(x_curr)
                 obs_scale = self._obs_noise()
@@ -116,15 +112,17 @@ class SparseVariationalGPSSM(PyroModule):
         )
         batch_size, horizon, _ = y.shape
         encoding = self.encoder(y, lengths)
-        init_cov = self._diag_embed(encoding.init_scale.pow(2))
+        init_scale = encoding.init_scale
         with pyro.plate("batch", batch_size):
             pyro.sample(
                 "x_0",
-                dist.MultivariateNormal(encoding.init_loc, covariance_matrix=init_cov),
+                dist.Normal(encoding.init_loc, init_scale).to_event(1),
             )
             for t in range(horizon):
-                cov = self._diag_embed(encoding.scale[:, t, :].pow(2))
                 pyro.sample(
                     f"x_{t+1}",
-                    dist.MultivariateNormal(encoding.loc[:, t, :], covariance_matrix=cov),
+                    dist.Normal(
+                        encoding.loc[:, t, :],
+                        encoding.scale[:, t, :],
+                    ).to_event(1),
                 )

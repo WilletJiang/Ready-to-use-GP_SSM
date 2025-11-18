@@ -39,15 +39,16 @@ def generate_synthetic_sequences(
     lengths = torch.full((num_sequences,), sequence_length, dtype=torch.long, device=device)
     weight = torch.randn(state_dim, state_dim, device=device) * 0.2
     obs_matrix = torch.randn(obs_dim, state_dim, device=device) * observation_gain
-    proc_noise = torch.distributions.Normal(0.0, math.sqrt(process_noise))
-    obs_noise_dist = torch.distributions.Normal(0.0, math.sqrt(obs_noise))
+    proc_noise_std = math.sqrt(process_noise)
+    obs_noise_std = math.sqrt(obs_noise)
     # Vectorize across sequences to remove outer Python loop
     x_prev = torch.randn(num_sequences, state_dim, device=device) * 0.1
     for t in range(sequence_length):
         drift = _sinusoidal_drift(x_prev, weight)
-        noise = proc_noise.sample((num_sequences, state_dim)).to(device)
+        noise = torch.randn(num_sequences, state_dim, device=device) * proc_noise_std
         x_curr = x_prev + 0.1 * drift + noise
-        y = x_curr @ obs_matrix.T + obs_noise_dist.sample((num_sequences, obs_dim)).to(device)
+        obs_noise = torch.randn(num_sequences, obs_dim, device=device) * obs_noise_std
+        y = x_curr @ obs_matrix.T + obs_noise
         latents[:, t] = x_curr
         sequences[:, t] = y
         x_prev = x_curr
@@ -84,8 +85,8 @@ def generate_system_identification_sequences(
     nonlin = 0.1 * torch.randn(state_dim, state_dim, generator=generator, device=device)
     control_mat = 0.2 * torch.randn(state_dim, state_dim, generator=generator, device=device)
     obs_mat = torch.randn(obs_dim, state_dim, generator=generator, device=device)
-    proc_noise = torch.distributions.Normal(0.0, math.sqrt(process_noise))
-    obs_noise_dist = torch.distributions.Normal(0.0, math.sqrt(obs_noise))
+    proc_noise_std = math.sqrt(process_noise)
+    obs_noise_std = math.sqrt(obs_noise)
     freqs = torch.rand(state_dim, generator=generator, device=device) * 0.5 + 0.2
     phases = torch.rand(state_dim, generator=generator, device=device) * 2 * math.pi
     # Vectorize across sequences; keep temporal recursion
@@ -97,10 +98,27 @@ def generate_system_identification_sequences(
         drift_nonlin = torch.tanh(x_prev @ nonlin.T)
         control_term = control.unsqueeze(0) @ control_mat.T  # [1, state_dim]
         drift = drift_lin + drift_nonlin + control_term
-        noise = proc_noise.sample((num_sequences, state_dim)).to(device)
+        noise = (
+            torch.randn(
+                num_sequences,
+                state_dim,
+                generator=generator,
+                device=device,
+            )
+            * proc_noise_std
+        )
         x_curr = x_prev + dt * drift + noise
         x_curr = torch.clamp(x_curr, -3.0, 3.0)
-        y = torch.tanh(x_curr) @ obs_mat.T + obs_noise_dist.sample((num_sequences, obs_dim)).to(device)
+        obs_noise = (
+            torch.randn(
+                num_sequences,
+                obs_dim,
+                generator=generator,
+                device=device,
+            )
+            * obs_noise_std
+        )
+        y = torch.tanh(x_curr) @ obs_mat.T + obs_noise
         latents[:, t] = x_curr
         obs[:, t] = y
         x_prev = x_curr

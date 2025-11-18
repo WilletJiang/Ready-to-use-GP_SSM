@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from typing import Optional, Tuple
+from typing import Optional, Tuple, Union
 
 import torch
 from pyro import distributions as dist
@@ -31,12 +31,18 @@ class SparseGPTransition(PyroModule):
     def u_dim(self) -> int:
         return self.state_dim * self.num_inducing
 
-    def prior(self) -> dist.MultivariateNormal:
-        kzz = self.kernel.gram(self.inducing_points)
+    def prior(
+        self,
+        return_chol: bool = False,
+    ) -> Union[dist.MultivariateNormal, Tuple[dist.MultivariateNormal, Tensor]]:
+        kzz, chol = self._kzz_and_chol()
         eye = torch.eye(self.state_dim, device=kzz.device, dtype=kzz.dtype)
         cov = torch.kron(eye, kzz)
         loc = torch.zeros(self.u_dim, device=kzz.device, dtype=kzz.dtype)
-        return dist.MultivariateNormal(loc, covariance_matrix=cov)
+        mvn = dist.MultivariateNormal(loc, covariance_matrix=cov)
+        if return_chol:
+            return mvn, chol
+        return mvn
 
     def _kzz_and_chol(self) -> Tuple[Tensor, Tensor]:
         kzz = self.kernel.gram(self.inducing_points)
@@ -46,11 +52,12 @@ class SparseGPTransition(PyroModule):
     def _chol_solve(self, chol: Tensor, rhs: Tensor) -> Tensor:
         return torch.cholesky_solve(rhs, chol)
 
-    def precompute(self, u: Tensor) -> Tuple[Tensor, Tensor]:
+    def precompute(self, u: Tensor, chol: Optional[Tensor] = None) -> Tuple[Tensor, Tensor]:
         """
         Precompute Kzz cholesky and solved_u for reuse across many time steps.
         """
-        kzz, chol = self._kzz_and_chol()
+        if chol is None:
+            _, chol = self._kzz_and_chol()
         solved_u = self._chol_solve(chol, u.T)
         return chol, solved_u
 
