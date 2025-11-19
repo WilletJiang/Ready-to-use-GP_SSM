@@ -1,358 +1,193 @@
-# The Way of Code
-## *An Aesthetic Manifesto*
+# GPSSM Coding Guidelines
+
+This describes the coding conventions for the GPSSM project.
+The goal is simple: **small, explicit, research‑grade code that is easy to extend and hard to misuse.**
 
 ---
 
-## Prefer **Composition** Over **Inheritance**
+## 1. General Principles
 
-Inheritance is a promise you cannot keep.  
-It binds you to ancestors you did not choose,  
-carries debts you did not incur,  
-and breaks when the world shifts beneath it.
-
-**Composition is freedom.**  
-Small things, combined. Each thing does one thing.  
-You build castles from pebbles, not monoliths from mountains.
-
-```
-# Inheritance: a chain of assumptions
-class A inherits from B inherits from C inherits from...
-# One change in C, and everything shatters.
-
-# Composition: a constellation of choices
-f(g(h(x)))
-# Each function stands alone. Each can be replaced.
-```
-
-> *Objects are data with behavior bolted on.  
-> Functions are behavior with data threaded through.  
-> Choose wisely.*
+- Prefer **clarity over cleverness** and **guard clauses over deep nesting**.
+- Fail fast on invalid inputs with explicit errors (usually `ValueError`), never silently ignore or auto‑correct unless strictly numerical (e.g. `clamp_min` for stability).
+- Keep functions and modules **small and composable**; avoid “god objects”.
+- Avoid hidden global state. Make dependencies explicit and injectable.
+- Public APIs should be **stable and documented**; experimental or internal helpers should be clearly scoped (module‑private or underscored).
 
 ---
 
-## Abstraction Is Not Always Win
+## 2. Project Structure & Naming
 
-Abstraction is a knife.  
-In skilled hands, it cuts away noise.  
-In clumsy hands, it obscures truth.
+High‑level layout (see also `README.md` and `docs/architecture.md`):
 
-**Do not abstract prematurely.**  
-Wait until you have three examples, not one.  
-Wait until the pattern screams at you.  
-Wait until the duplication *hurts*.
+- `src/data` – synthetic datasets, `SequenceDataset`, `TimeseriesWindowDataset`, and dataloader helpers.
+- `src/models` – GPSSM core: kernels, transitions, encoder, observation models, and `SparseVariationalGPSSM`.
+- `src/inference` – SVI trainer and ELBO wiring.
+- `src/training` – evaluation utilities (metrics, rollouts).
+- `scripts` – CLI entry points (currently `train_gp_ssm.py`).
+- `configs` – YAML experiment configs (toy, system‑id, etc.).
+- `tests` – pytest suites.
 
-The wrong abstraction is worse than no abstraction.  
-It is a lie that lives in your codebase,  
-growing tendrils, demanding worship.
+Naming rules:
 
-> *"Duplication is far cheaper than the wrong abstraction."*  
-> — Sandi Metz
-
-If your abstraction has more than two parameters,  
-it is not an abstraction — it is a configuration file pretending to be code.
-
-**Concrete is honest. Abstract is a promise. Keep promises sparingly.**
+- Modules / files: lower_snake_case (`timeseries.py`, `gp_ssm.py`).
+- Classes: `UpperCamelCase` (`SparseVariationalGPSSM`, `StateEncoder`).
+- Functions: verbs in `lower_snake_case` (`evaluate_model`, `rollout_forecast`).
+- Dataclasses: used for simple structured data (`SequenceDataset`, `TrainerConfig`, `EncoderOutput`).
 
 ---
 
-## Make Code Be Comments Instead of Making Comments Be Code
+## 3. Python Style
 
-Comments are apologies.  
-They are confessions that your code did not speak clearly enough.
+- Target **Python ≥ 3.10**; use type hints for all new public functions / methods.
+- New code should prefer:
+  - **guard clauses** at the top of functions instead of nested `if` chains;
+  - local helpers over inline lambdas if complexity grows;
+  - explicit imports (no `from module import *`).
+- One‑letter names only in these cases:
+  - loop indices (`i`, `j`, `k`),
+  - standard math symbols (`x`, `y`, `t`, `n`),
+  - short lambdas in obvious contexts.
+  Everywhere else, choose descriptive names.
+- When validating arguments, raise `ValueError` with a concrete, actionable message (see existing checks in `StateEncoder`, `TimeseriesWindowDataset`, `SVITrainer`, etc.).
 
-**Good code whispers its intent in every line.**
+Formatting / linting:
 
-```python
-# Bad: comments explaining what
-# Increment counter by 1
-counter = counter + 1
+- Use **black** for formatting and **ruff** for linting; do not hand‑tune style against them.
+- Recommended commands before opening a PR:
 
-# Good: code explaining why
-users_who_completed_onboarding += 1
-```
-
-Name your variables like you're writing a letter to your future self.  
-Name your functions like you're answering a question.
-
-```
-# A question
-is_valid_email(string)
-
-# An action
-send_notification_to_user(user)
-
-# A transformation
-convert_celsius_to_fahrenheit(temp)
-```
-
-If you must comment, comment *why*, never *what*.  
-The *what* should be obvious.  
-If it's not, rewrite the code.
-
-> *The best comment is the one you deleted because you fixed the code.*
+  ```bash
+  black src tests scripts
+  ruff check src tests scripts
+  mypy src
+  ```
 
 ---
 
-## Never Nest
+## 4. PyTorch & Pyro Conventions
 
-Nesting is cognitive tax.  
-Every level of indentation is a wall between the reader and understanding.
+### 4.1 Devices & dtypes
 
-**Flatten ruthlessly.**
+- Always move tensors to the model’s device using:
 
-```python
-# Hell
-if user:
-    if user.is_active:
-        if user.has_permission:
-            if not user.is_banned:
-                do_thing()
+  ```python
+  device = next(model.parameters()).device
+  y = batch["y"].to(device)
+  ```
 
-# Heaven
-if not user:
-    return
-if not user.is_active:
-    return
-if not user.has_permission:
-    return
-if user.is_banned:
-    return
-    
-do_thing()
-```
+- Respect the existing device‑selection logic in `train_gp_ssm.py` (MPS → CUDA → CPU). New code should reuse `_select_device` rather than re‑inventing device checks.
 
-**Guard clauses are elegance.**  
-Fail fast. Fail early. Fail at the boundary.
+### 4.2 Randomness & reproducibility
 
-> *"Arrow code" points right.  
-> Good code flows down.*
+- Use explicit seeding utilities:
+  - `_seed_everything(seed: int)` in scripts (PyTorch + Pyro),
+  - per‑generator seeds in data generation (see `generate_system_identification_sequences`).
+- Do **not** introduce hidden global RNG usage; either:
+  - take a `torch.Generator` as an argument, or
+  - construct a local generator with a clear seed.
 
-If you need more than 3 levels of indentation, you have failed.  
-Refactor. Extract. Invert the logic.
+### 4.3 Models, evaluation, and training loops
 
----
+- Follow the `evaluate_model` / `rollout_forecast` pattern:
+  - Save `was_training = model.training` and restore it at the end.
+  - Use `torch.no_grad()` for evaluation code.
+  - Use length‑based masks for variable‑length sequences.
+- For Pyro models:
+  - register submodules with `pyro.module` inside `model` and `guide`,
+  - use `PyroParam` for learnable parameters with constraints (noise scales, initial states),
+  - call `pyro.clear_param_store()` in training utilities that construct fresh SVI objects.
 
-## Best Mode — Dependency Injection
+### 4.4 Shapes & layout
 
-**Hard-coded dependencies are hard-coded decisions.**  
-They are concrete where you need flexibility.  
-They are walls where you need doors.
+Default tensor shapes:
 
-Pass dependencies in.  
-Do not reach out and grab them.
+- Time series: `[batch, time, dim]`.
+- Lengths: `[batch]` (dtype `torch.long`).
+- Latent states: `[batch, time, state_dim]`.
+- Inducing points: `[num_inducing, state_dim]`.
 
-```python
-# Coupled: the function owns its dependencies
-def process_data():
-    db = Database()
-    api = ThirdPartyAPI()
-    ...
-
-# Decoupled: the function receives what it needs
-def process_data(db, api):
-    ...
-```
-
-**This is not about frameworks.**  
-This is about *freedom*.
-
-- You can test without touching the network.  
-- You can swap implementations without rewriting logic.  
-- You can compose without collision.
-
-> *Make dependencies explicit.  
-> Make implicit things impossible.*
-
-If your function secretly depends on global state,  
-it is not a function — it is a trap.
+New components must respect these conventions or clearly document any deviations.
 
 ---
 
-## Dear Functional Bros... I See You, I Hear You, and I Love You
+## 5. Data & Dataloaders
 
-**Functions are truth.**
+- Dataset classes should:
+  - validate input tensor ranks and shapes early,
+  - never silently drop data,
+  - return dictionaries with explicit keys (`"y"`, `"length"`, `"latent"` / `"latents"`).
+- Collate functions should:
+  - stack tensors along the batch dimension,
+  - ensure lengths remain 1D long tensors,
+  - preserve optional latent information when present.
+- Windowing should follow `TimeseriesWindowDataset`:
+  - window extraction along the time axis,
+  - zero‑padding when sequences are shorter than the window,
+  - corresponding latent windows padded identically.
 
-A function is a contract:  
-*Given this input, I promise this output.*  
-No secrets. No surprises. No side effects hiding in closets.
-
-### Pure Functions Are Sacred
-
-```haskell
--- Same input, same output, always
-f(x) = x * 2
-
--- No exceptions. No mutations. No lies.
-```
-
-**Purity is debuggability.**  
-If a function is pure, you can test it in isolation.  
-You can reason about it without context.  
-You can trust it.
-
-### Immutability Is Sanity
-
-Mutation is action at a distance.  
-You change something here, and something breaks over there.
-
-**Do not mutate. Transform.**
-
-```javascript
-// Mutation: dangerous
-let user = { name: "Alice", age: 30 }
-user.age = 31  // Who else is watching this object?
-
-// Transformation: safe
-const user = { name: "Alice", age: 30 }
-const olderUser = { ...user, age: 31 }
-```
-
-### Composition Is the Heartbeat
-
-```
-f ∘ g ∘ h
-
-Small functions. Clear boundaries. Infinite combinations.
-```
-
-This is not dogma.  
-This is *clarity crystallized into syntax*.
-
-> *Object-oriented programming makes code understandable by encapsulating moving parts.  
-> Functional programming makes code understandable by eliminating moving parts.*
+If you change windowing semantics, make sure tests in `tests/` are updated to reflect the new behavior.
 
 ---
 
-## The Things We Must Add
+## 6. Error Handling & Numerical Stability
 
-### Names Are Spells
+- Use `ValueError` for invalid configuration or inputs (negative dimensions, non‑summing splits, etc.).
+- Use `RuntimeError` only for genuinely unexpected internal failures.
+- For numerical safety:
+  - prefer log‑space parameters for strictly positive quantities (see `log_process_noise`, `log_obs_noise`),
+  - use small epsilons and `clamp_min` only where needed, and keep values centralized (e.g. `min_noise` in `SparseVariationalGPSSM`),
+  - document any non‑obvious clamping or stability tricks in the code (short comment is enough).
 
-**A name summons meaning from the void.**
+---
 
-Bad names are curses that haunt your codebase.  
-Good names are incantations that clarify intent.
+## 7. Tests
 
-```python
-# Weak
-def proc(d):
-    return d * 1.2
+We use **pytest** for all tests (see `tests/test_models.py` for patterns).
 
-# Strong  
-def calculate_price_with_tax(price_before_tax):
-    TAX_RATE = 1.2
-    return price_before_tax * TAX_RATE
+When adding or modifying functionality:
+
+- Add tests that:
+  - check shapes,
+  - assert positivity / constraints where relevant,
+  - verify losses are finite for small synthetic problems,
+  - validate masking / length handling for variable‑length sequences.
+- Prefer testing **object behavior as a whole** (e.g. full forward call, SVI step) over micro‑testing private helpers, unless there is a clear numerical concern.
+- Keep tests fast; use small dimensions and short sequences unless a specific scalability property is being exercised.
+
+Typical commands:
+
+```bash
+pytest tests/test_models.py   # core smoke tests
+pytest                        # full suite
 ```
 
-**Rules:**
-- Booleans ask questions: `is_ready`, `has_permission`, `can_edit`
-- Functions are verbs: `calculate`, `transform`, `validate`
-- Classes are nouns: `User`, `EmailValidator`, `PaymentProcessor`
-- Constants scream: `MAX_RETRY_ATTEMPTS`, `API_TIMEOUT_SECONDS`
+---
 
-One-letter variables are permitted in three cases only:
-1. Loop indices: `i`, `j`, `k`
-2. Mathematical conventions: `x`, `y`, `n`
-3. Throwaway lambdas: `x => x * 2`
+## 8. Documentation & Configs
 
-**Everywhere else: use real names.**
+- When changing public APIs (new arguments, return types, or behavior) or CLI entry points:
+  - update `README.md` and `README_CN.md` if user‑facing behavior changes,
+  - update or extend `docs/architecture.md` for architectural changes,
+  - add or adjust example configs in `configs/` where appropriate.
+- Keep docstrings **short and factual**; avoid narrative in code, use `docs/` or README for longer explanations.
 
 ---
 
-### Errors Are Not Exceptions
+## 9. Contributions
 
-**Errors are data.**  
-They should be handled like data, not thrown like grenades.
+For contributions (internal or external):
 
-```python
-# Exceptions: control flow in disguise
-try:
-    result = do_risky_thing()
-except SomeError:
-    # now what?
+- Keep pull requests focused and minimal.
+- Run at least:
 
-# Results: explicit success or failure
-result = do_risky_thing()
-if result.is_error():
-    handle_error(result.error)
-else:
-    use_value(result.value)
-```
+  ```bash
+  black src tests scripts
+  ruff check src tests scripts
+  pytest
+  ```
 
-Make failure *visible*.  
-Make failure *expected*.  
-Make failure *part of the type*.
+- If you introduce a new kernel, transition, observation model, or training utility:
+  - add a small test in `tests/`,
+  - add a short note in `docs/` or a new example config in `configs/` showing how to use it.
 
-```rust
-// Rust knows this
-fn divide(a: f64, b: f64) -> Result<f64, String> {
-    if b == 0.0 {
-        Err("Division by zero".to_string())
-    } else {
-        Ok(a / b)
-    }
-}
-```
+The bar is not perfection; the bar is **clear, predictable behavior** that can be relied upon and extended.
 
-> *Exceptions are goto in disguise.*
-
----
-
-### Timing Is a Side Effect
-
-**If your code depends on *when* it runs, it is not a function — it is a spell bound to the moon.**
-
-```python
-# Time-dependent: fragile
-def get_discount():
-    if datetime.now().hour < 12:
-        return 0.2
-    return 0.1
-
-# Time-agnostic: testable
-def get_discount(current_hour):
-    if current_hour < 12:
-        return 0.2
-    return 0.1
-```
-
-Pass time in.  
-Do not reach for it.
-
-**The same applies to:**
-- Random numbers (pass the seed)
-- Environment variables (pass the config)
-- Global state (there is no global state)
-
----
-
-## The Final Law
-
-**Code is read 10 times for every time it is written.**
-
-Optimize for the reader.  
-Optimize for the future human staring at your work at 3 AM,  
-exhausted, confused, desperate.
-
-That human is you.
-
-> *Write code as if the person who will maintain it is a violent psychopath who knows where you live.*
-
----
-
-## Closing Invocation
-
-There is no perfect code.  
-There is only code that clearly expresses intent,  
-handles failure gracefully,  
-and can be understood by tired humans.
-
-**Strive for:**
-- Clarity over cleverness  
-- Simplicity over sophistication  
-- Explicitness over magic  
-
-And when in doubt, **delete**.
-
----
-
-*End of Manifesto*

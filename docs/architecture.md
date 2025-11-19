@@ -12,17 +12,16 @@
 - Masked padding ensures batches of unequal length contribute only where data exist.
 
 ## Training Loop
-1. 生成或加载序列数据（toy 正弦系统 / system-id 非线性受控系统），并通过 `split_dataset` 得到 train/val/test。
-2. `TimeseriesWindowDataset` 负责窗口化和填充，训练/评估可使用不同窗口长度。
-3. 实例化 `SparseVariationalGPSSM`，并通过 `SVITrainer` 构建 `Trace_ELBO` 训练器。
-4. 训练循环每 `eval_every` 步触发 `evaluate_model`，报告 RMSE/NLL/latent RMSE；终止后再次在 val/test 上评估。
-5. `rollout_forecast` 利用摊销后验 + GP 转移均值做多步前向预测，衡量系统辨识/控制场景的预测性能。
+1. Generate or load sequence data (toy sine system / system-id nonlinear controlled system), and obtain train/val/test through `split_dataset`.
+2. `TimeseriesWindowDataset` is responsible for windowing and padding, with different window lengths available for training/evaluation.
+3. Instantiate `SparseVariationalGPSSM` and build a `Trace_ELBO` trainer through `SVITrainer`.
+4. The training loop triggers `evaluate_model` every `eval_every` steps, reporting RMSE/NLL/latent RMSE; after termination, re-evaluate on val/test.
+5. `rollout_forecast` uses discounted posterior mean + GP transition mean for multi-step forward prediction, measuring the prediction performance in system identification/control scenarios.
 
 ## Complexity
 - Kernel factorizations operate on `M x M` matrices; choosing `M <= 64` keeps Cholesky `O(M^3)` cost cheap relative to sequence unrolling.
 - Sequence processing is linear in time horizon; random window sampling makes the method scalable to arbitrarily long streams.
 
 ## Extension Hooks
-- Replace the RBF kernel with VC-EMatérn from the SPDE note by swapping `kernel_class` in configs.
 - Condition on control inputs by concatenating them into the state fed to the GP transition.
 - Enable multi-start hyper-parameter training via parallel Pyro SVI instances orchestrated at the script level.

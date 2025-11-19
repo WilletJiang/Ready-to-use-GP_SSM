@@ -41,7 +41,6 @@ def generate_synthetic_sequences(
     obs_matrix = torch.randn(obs_dim, state_dim, device=device) * observation_gain
     proc_noise_std = math.sqrt(process_noise)
     obs_noise_std = math.sqrt(obs_noise)
-    # Vectorize across sequences to remove outer Python loop
     x_prev = torch.randn(num_sequences, state_dim, device=device) * 0.1
     for t in range(sequence_length):
         drift = _sinusoidal_drift(x_prev, weight)

@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from pathlib import Path
-from typing import Any, Dict, Tuple
+from typing import Any, Dict, Tuple, Optional
 
 import pyro
 import torch
@@ -67,7 +67,22 @@ def _select_device(console: Console) -> torch.device:
 
 
 @app.command()
-def train(config: Path = typer.Option(..., exists=True, dir_okay=False)) -> None:
+def train(
+    config: Optional[Path] = typer.Option(
+        None,
+        exists=True,
+        dir_okay=False,
+        help="Path to YAML config file. 若不提供则默认使用 configs/default.yaml。",
+    ),
+) -> None:
+    if config is None:
+        project_root = Path(__file__).resolve().parent.parent
+        config = project_root / "configs" / "default.yaml"
+        console.print(
+            f"No --config provided, using default: {config}",
+            style="bold yellow",
+        )
+
     cfg = _load_config(config)
     trainer_cfg = cfg["trainer"]
     model_cfg = cfg["model"]
@@ -213,4 +228,4 @@ def train(config: Path = typer.Option(..., exists=True, dir_okay=False)) -> None
 
 
 if __name__ == "__main__":
-    app()
+    typer.run(train)

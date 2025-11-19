@@ -1,10 +1,10 @@
 [project]
-name = "spde-gp-kernel"
+name = "gp-ssm"
 version = "0.1.0"
 description = "Sparse variational GP state-space models with PyTorch"
 readme = "README.md"
 requires-python = ">=3.10"
-authors = [{name = "Taylor Mason"}]
+authors = [{name = "Gao Willet Jiang"}, {name = "Taylor Mason"}]
 dependencies = [
     "torch>=2.2.0,<2.3.0",
     "pyro-ppl>=1.9.1,<1.10",

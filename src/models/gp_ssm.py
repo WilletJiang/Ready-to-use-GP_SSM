@@ -9,7 +9,7 @@ from pyro.distributions import constraints
 from pyro.nn import PyroModule, PyroParam
 from torch import Tensor
 
-from .encoder import EncoderOutput, StateEncoder
+from .encoder import StateEncoder
 from .observation import AffineObservationModel
 from .transition import SparseGPTransition
 

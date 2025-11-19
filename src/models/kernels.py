@@ -1,13 +1,23 @@
 from __future__ import annotations
 
-import math
 from dataclasses import dataclass
-from typing import Tuple
+import sys
 
 import torch
 from torch import Tensor, nn
-import sys
-from .transition import torch_compile
+
+def torch_compile(func):
+    if sys.version_info >= (3, 13):
+        try:
+            return torch.jit.script(func)
+        except Exception:
+            return func
+    else:
+        try:
+            from torch import compile as c
+            return c(func)
+        except ImportError:
+            return func
 
 
 @torch_compile

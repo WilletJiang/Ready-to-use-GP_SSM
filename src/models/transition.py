@@ -6,22 +6,8 @@ import torch
 from pyro import distributions as dist
 from pyro.nn import PyroModule
 from torch import Tensor, nn
-import sys
 
-from .kernels import ARDRBFKernel
-
-def torch_compile(func):
-    if sys.version_info >= (3, 13):
-        try:
-            return torch.jit.script(func)
-        except Exception:
-            return func
-    else:
-        try:
-            from torch import compile as c
-            return c(func)
-        except ImportError:
-            return func
+from .kernels import ARDRBFKernel, torch_compile
 
 @torch_compile
 def _transition_forward_compute(

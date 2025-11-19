@@ -3,7 +3,6 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Optional
 
-import torch
 from torch import Tensor, nn
 from torch.nn.utils.rnn import pack_padded_sequence, pad_packed_sequence
 
