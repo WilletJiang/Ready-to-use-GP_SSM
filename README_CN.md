@@ -4,10 +4,6 @@
 </div>
 
 <p align="center">
-  <a href="README.md">English</a>
-</p>
-
-<p align="center">
   <a href="#1-安装">安装</a> •
   <a href="#2-快速开始">快速开始</a> •
   <a href="#3-问题设定与核心概念">问题设定与核心概念</a> •
@@ -211,7 +207,7 @@ tests/
 
 1. **Variational Gaussian Process State-Space Models**
    Roger Frigola, Yutian Chen, Carl E. Rasmussen.
-   *Advances in Neural Information Processing Systems 27 (NeurIPS), 2014.* citeturn1search0turn1academia12
+   *Advances in Neural Information Processing Systems 27 (NeurIPS), 2014.*
 
 2. **Probabilistic Recurrent State-Space Models (PR-SSM)**
    Andreas Doerr, Christian Daniel, Martin Schiegg, Duy Nguyen-Tuong, Stefan Schaal, Marc Toussaint, Sebastian Trimpe.
