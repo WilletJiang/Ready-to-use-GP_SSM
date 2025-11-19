@@ -22,7 +22,15 @@ from data.timeseries import (
 from inference.svi import SVITrainer, TrainerConfig
 from models.encoder import StateEncoder
 from models.gp_ssm import SparseVariationalGPSSM
-from models.kernels import ARDRBFKernel
+from models.kernels import (
+    ARDRBFKernel,
+    Kernel,
+    MaternKernel,
+    PeriodicKernel,
+    ProductKernel,
+    RationalQuadraticKernel,
+    SumKernel,
+)
 from models.transition import SparseGPTransition
 from training.evaluation import evaluate_model, rollout_forecast
 
@@ -66,6 +74,44 @@ def _select_device(console: Console) -> torch.device:
     return torch.device("cpu")
 
 
+def _build_kernel_from_config(config: Optional[Dict[str, Any]], state_dim: int) -> Kernel:
+    cfg = config or {}
+    kernel_type = cfg.get("type", "ard_rbf").lower()
+    jitter = cfg.get("jitter", 1e-5)
+    params = cfg.get("params", {})
+    if kernel_type == "ard_rbf":
+        return ARDRBFKernel(input_dim=state_dim, jitter=jitter)
+    if kernel_type == "matern":
+        nu = params.get("nu", 1.5)
+        return MaternKernel(input_dim=state_dim, nu=nu, jitter=jitter)
+    if kernel_type == "rational_quadratic":
+        alpha = params.get("alpha", 1.0)
+        return RationalQuadraticKernel(input_dim=state_dim, jitter=jitter, alpha=alpha)
+    if kernel_type == "periodic":
+        period = params.get("period", 1.0)
+        lengthscale = params.get("lengthscale", 1.0)
+        return PeriodicKernel(
+            input_dim=state_dim,
+            jitter=jitter,
+            period=period,
+            lengthscale=lengthscale,
+        )
+    if kernel_type in {"sum", "product"}:
+        components_cfg = cfg.get("components")
+        if not isinstance(components_cfg, list) or not components_cfg:
+            msg = f"{kernel_type} kernel requires a non-empty 'components' list"
+            raise ValueError(msg)
+        components = [
+            _build_kernel_from_config(component_cfg, state_dim)
+            for component_cfg in components_cfg
+        ]
+        if kernel_type == "sum":
+            return SumKernel(kernels=components, jitter=jitter)
+        return ProductKernel(kernels=components, jitter=jitter)
+    msg = f"Unknown kernel type: {kernel_type}"
+    raise ValueError(msg)
+
+
 @app.command()
 def train(
     config: Optional[Path] = typer.Option(
@@ -91,7 +137,7 @@ def train(
     device = _select_device(console)
     console.print(f"Using device: {device}", style="bold green")
 
-    kernel = ARDRBFKernel(input_dim=model_cfg["state_dim"], jitter=model_cfg["kernel"]["jitter"])
+    kernel = _build_kernel_from_config(model_cfg.get("kernel"), model_cfg["state_dim"])
     transition = SparseGPTransition(
         state_dim=model_cfg["state_dim"],
         num_inducing=model_cfg["inducing_points"],

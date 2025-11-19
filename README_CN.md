@@ -105,7 +105,7 @@ $$
 | --- | --- |
 | `models.gp_ssm.SparseVariationalGPSSM` | PyroModule 组合 GP 转移、编码器与观测头；过程/观测噪声与初始状态在对数域中作为 `PyroParam` 存储以保证正性，支持 `Trace_ELBO` 与 `TraceMeanField_ELBO`。 |
 | `models.transition.SparseGPTransition` | 稀疏 GP 转移模型，使用 ARDRBF 核与诱导点；`prior()` 给出诱导变量先验；`precompute()` 预计算 Cholesky 与线性方程求解以复用。 |
-| `models.kernels.ARDRBFKernel` | 带 ARD 的 RBF 核，长度尺度与幅度均在 log 域参数化，提供交叉协方差与加入抖动的 Gram 矩阵计算。 |
+| `models.kernels.*` | 最小 `Kernel` 接口及现成实现：`ARDRBFKernel`、`MaternKernel (ν∈{1/2,3/2,5/2})`、`RationalQuadraticKernel`、`PeriodicKernel`，以及 `SumKernel` / `ProductKernel` 组合器，可通过 YAML 配置直接选择。 |
 | `models.encoder.StateEncoder` | 双向 GRU 编码器，输出每个时间步的 mean/scale，同时给出初始状态分布；通过 `pack_padded_sequence` 支持变长序列。 |
 | `models.observation.AffineObservationModel` | 默认线性观测层 $y_t = C x_t + d$，可以替换为任意非线性解码器。 |
 | `inference.svi.SVITrainer` | 对 Pyro `SVI` 的轻量包装，内置 `ClippedAdam`、进度条打印、ELBO 类型选择与 checkpoint 保存。 |
@@ -144,7 +144,22 @@ $$
 
 ## 6. 扩展与自定义
 
-- **Kernel 替换**：可以实现任意与 `ARDRBFKernel` 接口兼容的核（例如 Matérn），并在 `SparseGPTransition` 构造时注入；只要保持张量形状与可微性一致，其余代码无需修改。
+- **Kernel 替换**：内置 ARD RBF、Matérn（ν 取 1/2、3/2、5/2）、Rational Quadratic、Periodic，以及支持加法/乘法组合的 `SumKernel` / `ProductKernel`。在 `model.kernel` 中配置即可：
+
+  ```yaml
+  model:
+    kernel:
+      type: sum            # 可选：ard_rbf | matern | rational_quadratic | periodic | sum | product
+      jitter: 1.0e-5
+      components:
+        - type: ard_rbf
+        - type: periodic
+          params:
+            period: 24.0
+            lengthscale: 0.5
+  ```
+
+  若需自定义，实现 `models.kernels.Kernel` 抽象类的 `forward` 与 `diag` 方法即可，并在配置里引用新的 `type` 名称。
 - **Observation / Encoder 自定义**：可以用任意 PyTorch / PyroModule 作为观测头或编码器，例如图像任务中的 CNN 解码器，或长序列任务中的 Transformer 编码器。
 - **控制输入建模**：在转移模型输入中拼接 `(x_t, u_t)` 即可支持受控系统；系统辨识数据生成器已经包含控制信号，可直接利用。
 - **多配置实验**：在 `configs/` 下添加新的 YAML 文件来定义实验（状态维度、诱导点个数、窗口长度、噪声尺度等），训练脚本会自动读取。

@@ -15,7 +15,9 @@ model:
   obs_dim: 2
   inducing_points: 32
   kernel:
+    type: ard_rbf
     jitter: 1.0e-5
+    params: {}
   process_noise_init: 0.05
   obs_noise_init: 0.1
   encoder_hidden: 64

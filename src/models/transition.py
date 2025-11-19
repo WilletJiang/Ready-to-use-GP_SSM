@@ -7,7 +7,8 @@ from pyro import distributions as dist
 from pyro.nn import PyroModule
 from torch import Tensor, nn
 
-from .kernels import ARDRBFKernel, torch_compile
+from .kernels import Kernel
+from .utils import torch_compile
 
 @torch_compile
 def _transition_forward_compute(
@@ -35,11 +36,14 @@ class SparseGPTransition(PyroModule):
         self,
         state_dim: int,
         num_inducing: int,
-        kernel: ARDRBFKernel,
+        kernel: Kernel,
     ) -> None:
         super().__init__()
         if state_dim <= 0 or num_inducing <= 0:
             msg = "state_dim and num_inducing must be positive"
+            raise ValueError(msg)
+        if kernel.input_dim != state_dim:
+            msg = "kernel.input_dim must match state_dim"
             raise ValueError(msg)
         self.state_dim = state_dim
         self.num_inducing = num_inducing

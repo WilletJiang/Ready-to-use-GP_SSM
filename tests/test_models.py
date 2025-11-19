@@ -1,6 +1,7 @@
 import math
 
 import pyro
+import pytest
 import torch
 
 from data.timeseries import (
@@ -13,12 +14,39 @@ from data.timeseries import (
 from inference.svi import SVITrainer, TrainerConfig
 from models.encoder import StateEncoder
 from models.gp_ssm import SparseVariationalGPSSM
-from models.kernels import ARDRBFKernel
+from models.kernels import (
+    ARDRBFKernel,
+    MaternKernel,
+    PeriodicKernel,
+    ProductKernel,
+    RationalQuadraticKernel,
+    SumKernel,
+)
 from models.transition import SparseGPTransition
 
 
-def test_kernel_shapes() -> None:
-    kernel = ARDRBFKernel(input_dim=3)
+@pytest.mark.parametrize(
+    "kernel_ctor",
+    [
+        lambda dim: ARDRBFKernel(input_dim=dim),
+        lambda dim: MaternKernel(input_dim=dim, nu=0.5),
+        lambda dim: MaternKernel(input_dim=dim, nu=1.5),
+        lambda dim: MaternKernel(input_dim=dim, nu=2.5),
+        lambda dim: RationalQuadraticKernel(input_dim=dim, alpha=0.8),
+        lambda dim: PeriodicKernel(input_dim=dim, period=1.2, lengthscale=0.7),
+        lambda dim: SumKernel(
+            kernels=[ARDRBFKernel(input_dim=dim), RationalQuadraticKernel(input_dim=dim, alpha=0.5)]
+        ),
+        lambda dim: ProductKernel(
+            kernels=[
+                ARDRBFKernel(input_dim=dim),
+                PeriodicKernel(input_dim=dim, period=2.0, lengthscale=0.5),
+            ]
+        ),
+    ],
+)
+def test_kernel_variants_shapes(kernel_ctor) -> None:
+    kernel = kernel_ctor(3)
     x = torch.randn(5, 3)
     y = torch.randn(4, 3)
     gram = kernel(x, y)
@@ -26,6 +54,10 @@ def test_kernel_shapes() -> None:
     diag = kernel.diag(x)
     assert diag.shape == (5,)
     assert torch.all(diag > 0)
+    inducing = torch.randn(6, 3)
+    kzz = kernel.gram(inducing)
+    assert kzz.shape == (6, 6)
+    assert torch.allclose(kzz, kzz.transpose(-2, -1), atol=1e-5)
 
 
 def test_transition_predictive_shapes() -> None:

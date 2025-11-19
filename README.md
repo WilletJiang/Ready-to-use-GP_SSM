@@ -109,7 +109,7 @@ Core components live under `src/`:
 | --- | --- |
 | `models.gp_ssm.SparseVariationalGPSSM` | PyroModule that combines a GP transition, encoder, and observation head. Process / observation noise and initial state are `PyroParam`s in log-space to enforce positivity. Supports `Trace_ELBO` and `TraceMeanField_ELBO`. |
 | `models.transition.SparseGPTransition` | Sparse GP transition model with ARD RBF kernel and inducing points. `prior()` returns the GP prior over inducing targets; `precompute()` caches Cholesky and solved quantities for efficient repeated use. |
-| `models.kernels.ARDRBFKernel` | ARD RBF kernel with log-parameterized lengthscales and outputscale, including helpers for cross-covariances and Gram matrices with jitter. |
+| `models.kernels.*` | Minimal `Kernel` interface plus built-ins: `ARDRBFKernel`, `MaternKernel (ν ∈ {1/2, 3/2, 5/2})`, `RationalQuadraticKernel`, `PeriodicKernel`, and compositional `SumKernel` / `ProductKernel`. All are configurable from the YAML config. |
 | `models.encoder.StateEncoder` | Bi-directional GRU encoder producing per-time-step mean/scale for the latent state and a separate initial state posterior; supports padded batches via `pack_padded_sequence`. |
 | `models.observation.AffineObservationModel` | Default linear observation model $y_t = C x_t + d$. Easily replaceable with nonlinear decoders for richer observation models. |
 | `inference.svi.SVITrainer` | Thin wrapper around Pyro’s `SVI` with `ClippedAdam`, progress reporting, configurable ELBO, and checkpoint saving. |
@@ -152,7 +152,22 @@ These metrics align with the evaluation style in the original variational GPSSM 
 
 The code is designed to be modified:
 
-- **Kernel swaps.** Implement any kernel with the same public interface as `ARDRBFKernel` (e.g., Matérn) and inject it into `SparseGPTransition`. No other code changes are required as long as shapes and differentiability are preserved.
+- **Kernel swaps.** Built-in options now include ARD RBF, Matérn (ν ∈ {1/2, 3/2, 5/2}), Rational Quadratic, Periodic, and Sum / Product combinators. Select them via `model.kernel`:
+
+  ```yaml
+  model:
+    kernel:
+      type: sum              # ard_rbf | matern | rational_quadratic | periodic | sum | product
+      jitter: 1.0e-5
+      components:
+        - type: ard_rbf
+        - type: periodic
+          params:
+            period: 24.0
+            lengthscale: 0.5
+  ```
+
+  Custom kernels simply need to subclass `models.kernels.Kernel` and implement `forward`/`diag`; they can then be referenced with a new `type` string.
 - **Custom observation / encoder.** Any PyTorch / PyroModule can be used as the observation head or encoder. For example, you can plug in a CNN-based decoder for images or a Transformer encoder for long, irregular sequences.
 - **Control inputs.** To model controlled systems, extend the transition to take concatenated `(x_t, u_t)` as input. The synthetic system-identification generator already simulates control signals, which you can feed into a modified transition.
 - **New experiment configs.** Add YAML files under `configs/` to define new experimental regimes (state dimension, number of inducing points, window length, noise scales, etc.). The training script reads these without changes.
