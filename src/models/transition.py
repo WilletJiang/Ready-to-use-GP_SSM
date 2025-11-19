@@ -4,32 +4,33 @@ from typing import Optional, Tuple, Union
 
 import torch
 from pyro import distributions as dist
+import pyro.distributions.transforms as T
 from pyro.nn import PyroModule
 from torch import Tensor, nn
 
 from .kernels import Kernel
 from .utils import torch_compile
 
+
 @torch_compile
 def _transition_forward_compute(
     kxz: Tensor,
     diag: Tensor,
-    chol: Tensor,
-    solved_u: Tensor
+    kzz_inv: Tensor,
+    alpha: Tensor,
 ) -> Tuple[Tensor, Tensor]:
-
-    mean = kxz @ solved_u
-    kxz_t = kxz.transpose(-2, -1) # [..., M, N]
-    v = torch.linalg.solve_triangular(chol, kxz_t, upper=False)
-    quad_form = v.pow(2).sum(dim=-2)
+    mean = kxz @ alpha
+    proj = kxz @ kzz_inv
+    quad_form = (proj * kxz).sum(dim=-1)
     var_scalar = diag - quad_form
     var_scalar = var_scalar.clamp_min(1e-6)
     var = var_scalar.unsqueeze(-1).expand_as(mean)
     return mean, var
 
+
 @torch_compile
-def _precompute_chol_solve(chol: Tensor, u_t: Tensor) -> Tensor:
-    return torch.cholesky_solve(u_t, chol)
+def _chol_inverse(chol: Tensor) -> Tensor:
+    return torch.cholesky_inverse(chol)
 
 class SparseGPTransition(PyroModule):
     def __init__(
@@ -50,6 +51,7 @@ class SparseGPTransition(PyroModule):
         self.kernel = kernel
         inducing = torch.randn(num_inducing, state_dim)
         self.inducing_points = nn.Parameter(inducing)
+        self.register_buffer("_eye", torch.eye(num_inducing), persistent=False)
 
     @property
     def u_dim(self) -> int:
@@ -60,27 +62,38 @@ class SparseGPTransition(PyroModule):
         return_chol: bool = False,
     ) -> Union[dist.MultivariateNormal, Tuple[dist.MultivariateNormal, Tensor]]:
         kzz, chol = self._kzz_and_chol()
-        eye = torch.eye(self.state_dim, device=kzz.device, dtype=kzz.dtype)
-        cov = torch.kron(eye, kzz)
-        loc = torch.zeros(self.u_dim, device=kzz.device, dtype=kzz.dtype)
-        mvn = dist.MultivariateNormal(loc, covariance_matrix=cov)
+        loc = torch.zeros(
+            self.state_dim,
+            self.num_inducing,
+            device=kzz.device,
+            dtype=kzz.dtype,
+        )
+        scale_tril = chol.unsqueeze(0).expand(self.state_dim, -1, -1)
+        base = dist.MultivariateNormal(loc, scale_tril=scale_tril)
+        indep = dist.Independent(base, 1)
+        reshape = T.ReshapeTransform(indep.event_shape, (self.u_dim,))
+        mvn = dist.TransformedDistribution(indep, reshape)
         if return_chol:
             return mvn, chol
         return mvn
 
     def _kzz_and_chol(self) -> Tuple[Tensor, Tensor]:
-        kzz = self.kernel.gram(self.inducing_points)
+        inducing = self.inducing_points
+        kzz = self.kernel(inducing, inducing)
+        eye = self._eye.to(device=inducing.device, dtype=inducing.dtype)
+        kzz = kzz + self.kernel.jitter * eye
         chol = torch.linalg.cholesky(kzz)
         return kzz, chol
 
     def precompute(self, u: Tensor, chol: Optional[Tensor] = None) -> Tuple[Tensor, Tensor]:
         """
-        Precompute Kzz cholesky and solved_u for reuse across many time steps.
+        Precompute Kzz^{-1} and the projected inducing mean for reuse across many time steps.
         """
         if chol is None:
             _, chol = self._kzz_and_chol()
-        solved_u = _precompute_chol_solve(chol, u.T)
-        return chol, solved_u
+        kzz_inv = _chol_inverse(chol)
+        alpha = kzz_inv @ u.T
+        return kzz_inv, alpha
 
     def forward(
         self,
@@ -90,9 +103,8 @@ class SparseGPTransition(PyroModule):
     ) -> Tuple[Tensor, Tensor]:
         evals = self.kernel.evaluate_cross(x_prev, self.inducing_points)
         if cache is None:
-            kzz, chol = self._kzz_and_chol()
-            solved_u = _precompute_chol_solve(chol, u.T)
+            kzz_inv, alpha = self.precompute(u)
         else:
-            chol, solved_u = cache
+            kzz_inv, alpha = cache
 
-        return _transition_forward_compute(evals.kxz, evals.diag, chol, solved_u)
+        return _transition_forward_compute(evals.kxz, evals.diag, kzz_inv, alpha)

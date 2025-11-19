@@ -108,7 +108,7 @@ Core components live under `src/`:
 | Component | Description |
 | --- | --- |
 | `models.gp_ssm.SparseVariationalGPSSM` | PyroModule that combines a GP transition, encoder, and observation head. Process / observation noise and initial state are `PyroParam`s in log-space to enforce positivity. Supports `Trace_ELBO` and `TraceMeanField_ELBO`. |
-| `models.transition.SparseGPTransition` | Sparse GP transition model with ARD RBF kernel and inducing points. `prior()` returns the GP prior over inducing targets; `precompute()` caches Cholesky and solved quantities for efficient repeated use. |
+| `models.transition.SparseGPTransition` | Sparse GP transition model with ARD RBF kernel and inducing points. `prior()` returns the GP prior over inducing targets; `precompute()` caches the Kzz inverse and projected inducing mean for efficient reuse. |
 | `models.kernels.*` | Minimal `Kernel` interface plus built-ins: `ARDRBFKernel`, `MaternKernel (ν ∈ {1/2, 3/2, 5/2})`, `RationalQuadraticKernel`, `PeriodicKernel`, and compositional `SumKernel` / `ProductKernel`. All are configurable from the YAML config. |
 | `models.encoder.StateEncoder` | Bi-directional GRU encoder producing per-time-step mean/scale for the latent state and a separate initial state posterior; supports padded batches via `pack_padded_sequence`. |
 | `models.observation.AffineObservationModel` | Default linear observation model $y_t = C x_t + d$. Easily replaceable with nonlinear decoders for richer observation models. |

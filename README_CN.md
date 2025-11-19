@@ -104,7 +104,7 @@ $$
 | 组件 | 说明 |
 | --- | --- |
 | `models.gp_ssm.SparseVariationalGPSSM` | PyroModule 组合 GP 转移、编码器与观测头；过程/观测噪声与初始状态在对数域中作为 `PyroParam` 存储以保证正性，支持 `Trace_ELBO` 与 `TraceMeanField_ELBO`。 |
-| `models.transition.SparseGPTransition` | 稀疏 GP 转移模型，使用 ARDRBF 核与诱导点；`prior()` 给出诱导变量先验；`precompute()` 预计算 Cholesky 与线性方程求解以复用。 |
+| `models.transition.SparseGPTransition` | 稀疏 GP 转移模型，使用 ARDRBF 核与诱导点；`prior()` 给出诱导变量先验；`precompute()` 预计算 Kzz 的逆与诱导均值投影以复用。 |
 | `models.kernels.*` | 最小 `Kernel` 接口及现成实现：`ARDRBFKernel`、`MaternKernel (ν∈{1/2,3/2,5/2})`、`RationalQuadraticKernel`、`PeriodicKernel`，以及 `SumKernel` / `ProductKernel` 组合器，可通过 YAML 配置直接选择。 |
 | `models.encoder.StateEncoder` | 双向 GRU 编码器，输出每个时间步的 mean/scale，同时给出初始状态分布；通过 `pack_padded_sequence` 支持变长序列。 |
 | `models.observation.AffineObservationModel` | 默认线性观测层 $y_t = C x_t + d$，可以替换为任意非线性解码器。 |

@@ -13,9 +13,13 @@ from .utils import torch_compile
 
 @torch_compile
 def _scaled_sq_dist(x: Tensor, y: Tensor, lengthscale: Tensor) -> Tensor:
-    x_scaled = x.unsqueeze(-2) / lengthscale
-    y_scaled = y.unsqueeze(-3) / lengthscale
-    return (x_scaled - y_scaled).pow(2).sum(dim=-1).clamp_min(0.0)
+    x_scaled = x / lengthscale
+    y_scaled = y / lengthscale
+    x_norm = x_scaled.pow(2).sum(dim=-1, keepdim=True)
+    y_norm = y_scaled.pow(2).sum(dim=-1, keepdim=True)
+    cross = x_scaled @ y_scaled.transpose(-2, -1)
+    sq_dist = x_norm + y_norm.transpose(-2, -1) - 2.0 * cross
+    return sq_dist.clamp_min(0.0)
 
 
 @torch_compile
@@ -238,13 +242,20 @@ class PeriodicKernel(Kernel):
 
     def forward(self, x: Tensor, y: Tensor) -> Tensor:
         self._validate_pair(x, y)
-        diff = x.unsqueeze(-2) - y.unsqueeze(-3)
-        scaled = diff * (math.pi / self.period)
-        sin_sq = torch.sin(scaled).pow(2)
-        lengthscale_sq = self.lengthscale.pow(2)
-        scaled_sum = (sin_sq / lengthscale_sq.clamp_min(1e-12)).sum(dim=-1)
-        base = torch.exp(-2.0 * scaled_sum)
-        return self.outputscale * base
+        two_pi = 2.0 * math.pi
+        phase_x = two_pi * x / self.period
+        phase_y = two_pi * y / self.period
+        cos_x = torch.cos(phase_x)
+        sin_x = torch.sin(phase_x)
+        cos_y = torch.cos(phase_y)
+        sin_y = torch.sin(phase_y)
+        inv_lengthscale_sq = self.lengthscale.pow(2).clamp_min(1e-12).reciprocal()
+        weighted_cos_x = cos_x * inv_lengthscale_sq
+        weighted_sin_x = sin_x * inv_lengthscale_sq
+        cos_term = weighted_cos_x @ cos_y.transpose(-2, -1)
+        sin_term = weighted_sin_x @ sin_y.transpose(-2, -1)
+        exponent = cos_term + sin_term - inv_lengthscale_sq.sum()
+        return self.outputscale * torch.exp(exponent)
 
     def diag(self, x: Tensor) -> Tensor:
         self._validate_single(x)
@@ -265,23 +276,18 @@ class SumKernel(Kernel):
 
     def forward(self, x: Tensor, y: Tensor) -> Tensor:
         self._validate_pair(x, y)
-        cov = self.kernels[0](x, y)
-        for kernel in self.kernels[1:]:
-            cov = cov + kernel(x, y)
-        return cov
+        components = [kernel(x, y) for kernel in self.kernels]
+        return torch.stack(components, dim=0).sum(dim=0)
 
     def diag(self, x: Tensor) -> Tensor:
         self._validate_single(x)
-        diag = self.kernels[0].diag(x)
-        for kernel in self.kernels[1:]:
-            diag = diag + kernel.diag(x)
-        return diag
+        diags = [kernel.diag(x) for kernel in self.kernels]
+        return torch.stack(diags, dim=0).sum(dim=0)
 
     def gram(self, inducing: Tensor) -> Tensor:
         self._validate_single(inducing)
-        kzz = self.kernels[0](inducing, inducing)
-        for kernel in self.kernels[1:]:
-            kzz = kzz + kernel(inducing, inducing)
+        gram_terms = [kernel(inducing, inducing) for kernel in self.kernels]
+        kzz = torch.stack(gram_terms, dim=0).sum(dim=0)
         eye = torch.eye(inducing.size(-2), device=inducing.device, dtype=inducing.dtype)
         return kzz + self.jitter * eye
 
@@ -300,23 +306,18 @@ class ProductKernel(Kernel):
 
     def forward(self, x: Tensor, y: Tensor) -> Tensor:
         self._validate_pair(x, y)
-        cov = self.kernels[0](x, y)
-        for kernel in self.kernels[1:]:
-            cov = cov * kernel(x, y)
-        return cov
+        components = [kernel(x, y) for kernel in self.kernels]
+        return torch.stack(components, dim=0).prod(dim=0)
 
     def diag(self, x: Tensor) -> Tensor:
         self._validate_single(x)
-        diag = self.kernels[0].diag(x)
-        for kernel in self.kernels[1:]:
-            diag = diag * kernel.diag(x)
-        return diag
+        diags = [kernel.diag(x) for kernel in self.kernels]
+        return torch.stack(diags, dim=0).prod(dim=0)
 
     def gram(self, inducing: Tensor) -> Tensor:
         self._validate_single(inducing)
-        kzz = self.kernels[0](inducing, inducing)
-        for kernel in self.kernels[1:]:
-            kzz = kzz * kernel(inducing, inducing)
+        cov_terms = [kernel(inducing, inducing) for kernel in self.kernels]
+        kzz = torch.stack(cov_terms, dim=0).prod(dim=0)
         eye = torch.eye(inducing.size(-2), device=inducing.device, dtype=inducing.dtype)
         return kzz + self.jitter * eye
 
@@ -331,4 +332,3 @@ __all__ = [
     "SumKernel",
     "ProductKernel",
 ]
-

@@ -60,6 +60,32 @@ def test_kernel_variants_shapes(kernel_ctor) -> None:
     assert torch.allclose(kzz, kzz.transpose(-2, -1), atol=1e-5)
 
 
+def test_sum_kernel_gram_adds_single_jitter() -> None:
+    torch.manual_seed(0)
+    inducing = torch.randn(4, 2)
+    k1 = ARDRBFKernel(input_dim=2, jitter=1e-4)
+    k2 = RationalQuadraticKernel(input_dim=2, jitter=2e-4)
+    combined = SumKernel([k1, k2], jitter=5e-5)
+    kzz = combined.gram(inducing)
+    raw = k1(inducing, inducing) + k2(inducing, inducing)
+    eye = torch.eye(inducing.size(0), device=inducing.device, dtype=inducing.dtype)
+    expected = raw + combined.jitter * eye
+    assert torch.allclose(kzz, expected, atol=1e-6)
+
+
+def test_product_kernel_gram_adds_single_jitter() -> None:
+    torch.manual_seed(0)
+    inducing = torch.randn(3, 2)
+    k1 = ARDRBFKernel(input_dim=2, jitter=1e-4)
+    k2 = PeriodicKernel(input_dim=2, jitter=2e-4, period=1.3, lengthscale=0.8)
+    combined = ProductKernel([k1, k2], jitter=5e-5)
+    kzz = combined.gram(inducing)
+    raw = k1(inducing, inducing) * k2(inducing, inducing)
+    eye = torch.eye(inducing.size(0), device=inducing.device, dtype=inducing.dtype)
+    expected = raw + combined.jitter * eye
+    assert torch.allclose(kzz, expected, atol=1e-6)
+
+
 def test_transition_predictive_shapes() -> None:
     kernel = ARDRBFKernel(input_dim=2)
     transition = SparseGPTransition(state_dim=2, num_inducing=4, kernel=kernel)
