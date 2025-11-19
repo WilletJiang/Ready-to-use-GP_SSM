@@ -144,7 +144,7 @@ Both return a `SequenceDataset` with observations, lengths, and optional latent 
 - **Latent RMSE** — optional, when latent ground truth is present in the dataset.
 - **Forecast RMSE** — computed via `rollout_forecast` in `scripts/train_gp_ssm.py` for a chosen context window and horizon.
 
-These metrics align with the evaluation style in the original variational GPSSM and PR-SSM works, while keeping the implementation compact. citeturn1search2turn2search9
+These metrics align with the evaluation style in the original variational GPSSM and PR-SSM works, while keeping the implementation compact. 
 
 ---
 
