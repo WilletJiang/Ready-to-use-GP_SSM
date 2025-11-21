@@ -138,6 +138,8 @@ def train(
     console.print(f"Using device: {device}", style="bold green")
 
     kernel = _build_kernel_from_config(model_cfg.get("kernel"), model_cfg["state_dim"])
+    q_structure = model_cfg.get("q_structure", "independent").lower()
+    structured_q = q_structure in {"markov", "vgm", "structured"}
     transition = SparseGPTransition(
         state_dim=model_cfg["state_dim"],
         num_inducing=model_cfg["inducing_points"],
@@ -148,6 +150,7 @@ def train(
         state_dim=model_cfg["state_dim"],
         hidden_size=model_cfg["encoder_hidden"],
         num_layers=model_cfg["encoder_layers"],
+        structured=structured_q,
     )
     model = SparseVariationalGPSSM(
         transition=transition,
@@ -156,6 +159,7 @@ def train(
         obs_dim=model_cfg["obs_dim"],
         process_noise_init=model_cfg["process_noise_init"],
         obs_noise_init=model_cfg["obs_noise_init"],
+        structured_q=structured_q,
     )
     model.to(device)
     dataset_type = data_cfg.get("type", "toy")
