@@ -16,7 +16,10 @@ def torch_compile(func):
     try:
         from torch import compile as _compile
 
-        return _compile(func)
+        try:
+            return _compile(func)
+        except Exception:
+            return func
     except ImportError:
         return func
 
