@@ -69,6 +69,10 @@ The training utilities expose two functions that you can reuse in your own scrip
 - `training.evaluation.rollout_forecast(model, y_hist, lengths, steps)`
   Uses the amortized posterior together with the GP transition mean to produce multi-step forecasts, suitable for system identification and control experiments.
 
+Structured variational option:
+
+- Set `model.q_structure: markov` in the YAML to switch the latent posterior from independent Gaussians to a Markov-structured Gaussian (block-tridiagonal precision). This improves temporal coherence while keeping training O(T·D³) and backward compatible; leave it as `independent` for the original behavior.
+
 You can import and reuse the model / data / inference modules directly:
 
 ```python
