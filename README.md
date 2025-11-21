@@ -100,6 +100,7 @@ Key ideas:
 - **Sparse variational GPSSM.** Following the formulation of Frigola, Chen & Rasmussen (2014), we introduce inducing variables $u = f(Z)$ at inducing locations $Z$ and optimize a variational free energy objective, trading off model capacity and computational cost while keeping the posterior tractable.
 - **Amortized state inference.** Inspired by the Probabilistic Recurrent State-Space Model (PR-SSM) of Doerr et al. (2018), we use a recurrent encoder (bi-GRU) to parameterize the variational distribution $q(x_{0:T})$. This scales to long sequences and reuses an encoder across many trajectories.
 - **Fast SVI training.** The combination of a sparse GP transition, amortized inference, and Pyro’s stochastic variational inference enables scalable training on batches of windowed sequences with automatic differentiation.
+- **Structured variational posterior (optional).** Besides the independent Gaussian posterior, we offer a Markov-structured Gaussian with block-tridiagonal precision (`model.q_structure: markov`), borrowing from VGM/ESGVI/ASVI lines of work to capture time correlations at O(T·D³) cost.
 
 This implementation is intentionally **small and explicit**: it is meant as a starting point for research on GPSSMs, not as a monolithic framework.
 
@@ -225,7 +226,7 @@ docs/
   architecture.md   # high-level modeling and design notes
 
 tests/
-  test_models.py    # kernel, transition, dataset, and SVI smoke tests
+  test_kernels.py / test_transition.py / test_data.py / test_svi.py
 ```
 
 ---
@@ -239,6 +240,18 @@ tests/
  **Probabilistic Recurrent State-Space Models (PR-SSM)**
    Andreas Doerr, Christian Daniel, Martin Schiegg, Duy Nguyen-Tuong, Stefan Schaal, Marc Toussaint, Sebastian Trimpe.
    *Proceedings of the 35th International Conference on Machine Learning (ICML), PMLR 80, 2018.*
+
+ **Structured Variational Inference for Dynamical Systems**
+   Alessandro Curi, Janis Keuper, Felipe Tobar, Joachim M. Buhmann.
+   *Learning for Dynamics & Control (L4DC), 2020.*
+
+ **Exactly Sparse Gaussian Variational Inference (ESGVI)**
+   Timothy D. Barfoot, Winston Murray.
+   *arXiv:1911.08333, 2019.*
+
+ **Automatic Structured Variational Inference (ASVI)**
+   Luca Ambrogioni, F. J. R. Ruiz, Tim Meireles, Max Welling.
+   *arXiv:2002.00643, 2020.*
 
 Project-internal references:
 

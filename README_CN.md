@@ -62,8 +62,12 @@ python scripts/train_gp_ssm.py train --config configs/default.yaml
 
 - `training.evaluation.evaluate_model(model, loader)`
   计算观测 RMSE、NLL，以及在提供 latent 真值时的 latent RMSE。
-- `training.evaluation.rollout_forecast(model, y_hist, lengths, steps)`
-  使用摊销后验 + GP 转移均值做多步预测，适合系统辨识 / 控制类研究。
+ - `training.evaluation.rollout_forecast(model, y_hist, lengths, steps)`
+   使用摊销后验 + GP 转移均值做多步预测，适合系统辨识 / 控制类研究。
+
+可选的结构化变分后验：
+
+- 在 YAML 里将 `model.q_structure` 设为 `markov`，即可把独立高斯后验替换为 Markov 结构高斯（块三对角精度），在保持训练复杂度 O(T·D³) 的同时更好地刻画时间相关性；默认的 `independent` 则保持原有行为。
 
 你也可以直接导入模型与数据模块：
 
@@ -92,6 +96,7 @@ $$
 - **稀疏变分 GPSSM**：沿用 Frigola, Chen & Rasmussen (2014) 中的思路，引入诱导点 $Z$ 与诱导变量 $u = f(Z)$，通过优化变分下界进行学习，可以在模型容量与计算复杂度之间平衡，同时保持近似后验可处理。
 - **摊销状态推断**：借鉴 Doerr 等人在 PR-SSM（Probabilistic Recurrent State-Space Models, 2018）中提出的摊销推断思想，使用双向 GRU 编码器来参数化 $q(x_{0:T})$，从而在长序列和批训练下保持可扩展性。
 - **随机变分推断 (SVI)**：结合稀疏 GP 转移、摊销后验与 Pyro 的 SVI 接口，在长时间序列和随机小批量上高效训练。
+- **可选的结构化后验**：除了独立高斯外，提供 Markov 结构化高斯后验（块三对角精度，`model.q_structure: markov`），借鉴 VGM / ESGVI / ASVI 的思路，在不增加阶数的情况下保留时间相关性。
 
 本实现刻意保持**体积小、结构清晰**，方便在此基础上做理论或工程上的改动，而不是被一个过度工程化的框架绑死。
 
@@ -213,7 +218,7 @@ docs/
   architecture.md   # 建模与实现的高层说明
 
 tests/
-  test_models.py    # kernel、transition、数据集与 SVI 冒烟测试
+  test_kernels.py / test_transition.py / test_data.py / test_svi.py
 ```
 
 ---
@@ -227,6 +232,18 @@ tests/
 2. **Probabilistic Recurrent State-Space Models (PR-SSM)**
    Andreas Doerr, Christian Daniel, Martin Schiegg, Duy Nguyen-Tuong, Stefan Schaal, Marc Toussaint, Sebastian Trimpe.
    *Proceedings of the 35th International Conference on Machine Learning (ICML), PMLR 80, 2018.*
+
+3. **Structured Variational Inference for Dynamical Systems**
+   Alessandro Curi, Janis Keuper, Felipe Tobar, Joachim M. Buhmann.
+   *Learning for Dynamics & Control (L4DC), 2020.*
+
+4. **Exactly Sparse Gaussian Variational Inference (ESGVI)**
+   Timothy D. Barfoot, Winston Murray.
+   *arXiv:1911.08333, 2019.*
+
+5. **Automatic Structured Variational Inference (ASVI)**
+   Luca Ambrogioni, F. J. R. Ruiz, Tim Meireles, Max Welling.
+   *arXiv:2002.00643, 2020.*
 
 项目内部文档：
 
