@@ -205,17 +205,21 @@ def train(
         shuffle=True,
     )
     eval_window = data_cfg.get("eval_window_length") or data_cfg["sequence_length"]
+    eval_generator = torch.Generator().manual_seed(trainer_cfg["seed"])
     val_dataset = TimeseriesWindowDataset(
         sequences=splits["val"].observations,
         lengths=splits["val"].lengths,
         window_length=eval_window,
         latents=splits["val"].latents,
+        generator=eval_generator,
     )
+    test_generator = torch.Generator().manual_seed(trainer_cfg["seed"])
     test_dataset = TimeseriesWindowDataset(
         sequences=splits["test"].observations,
         lengths=splits["test"].lengths,
         window_length=eval_window,
         latents=splits["test"].latents,
+        generator=test_generator,
     )
     val_loader = build_dataloader(val_dataset, batch_size=trainer_cfg["batch_size"], shuffle=False)
     test_loader = build_dataloader(test_dataset, batch_size=trainer_cfg["batch_size"], shuffle=False)

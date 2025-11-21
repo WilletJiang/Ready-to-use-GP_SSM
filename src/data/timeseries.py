@@ -160,15 +160,43 @@ class TimeseriesWindowDataset(Dataset):
         lengths: Tensor,
         window_length: Optional[int],
         latents: Optional[Tensor] = None,
+        generator: Optional[torch.Generator] = None,
     ) -> None:
         if sequences.ndim != 3:
             msg = "Expect [N, T, D] tensor"
             raise ValueError(msg)
+        if lengths.ndim != 1 or lengths.size(0) != sequences.size(0):
+            msg = "lengths must be 1D and match sequences batch size"
+            raise ValueError(msg)
+        if torch.any(lengths > sequences.size(1)):
+            msg = "lengths entries cannot exceed sequence length"
+            raise ValueError(msg)
         self.sequences = sequences
         self.lengths = lengths
         self.latents = latents
+        if latents is not None and latents.shape[:2] != sequences.shape[:2]:
+            msg = "latents must align with sequences on batch and time dimensions"
+            raise ValueError(msg)
         full_length = sequences.size(1)
         self.window_length = window_length or full_length
+        self.generator = generator
+        self._fixed_starts: Optional[Tensor] = None
+        if generator is not None and self.window_length < full_length:
+            # Precompute deterministic start indices for reproducible evaluation
+            starts = []
+            for idx in range(sequences.size(0)):
+                length = int(lengths[idx].item())
+                if length <= self.window_length:
+                    starts.append(0)
+                else:
+                    start = torch.randint(
+                        0,
+                        length - self.window_length + 1,
+                        (1,),
+                        generator=generator,
+                    ).item()
+                    starts.append(start)
+            self._fixed_starts = torch.tensor(starts, dtype=torch.long)
 
     def __len__(self) -> int:
         return self.sequences.size(0)
@@ -183,7 +211,15 @@ class TimeseriesWindowDataset(Dataset):
             window = seq[:length]
             pad_len = target_window - length
         else:
-            start = torch.randint(0, length - target_window + 1, (1,)).item()
+            if self._fixed_starts is not None:
+                start = int(self._fixed_starts[idx].item())
+            else:
+                start = torch.randint(
+                    0,
+                    length - target_window + 1,
+                    (1,),
+                    generator=self.generator,
+                ).item()
             end = start + target_window
             window = seq[start:end]
         if pad_len > 0:

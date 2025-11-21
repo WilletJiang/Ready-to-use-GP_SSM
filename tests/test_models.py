@@ -167,3 +167,29 @@ def test_system_identification_dataset_split() -> None:
     assert sample["y"].shape[0] == 30
     assert sample["latent"] is not None
     assert sample["latent"].shape[1] == splits["train"].latents.size(-1)
+
+
+def test_window_dataset_is_deterministic_with_generator() -> None:
+    sequences = torch.randn(2, 12, 3)
+    lengths = torch.tensor([12, 12])
+    generator = torch.Generator().manual_seed(12345)
+    dataset = TimeseriesWindowDataset(
+        sequences=sequences,
+        lengths=lengths,
+        window_length=6,
+        generator=generator,
+    )
+    first = dataset[0]["y"]
+    second = dataset[0]["y"]
+    assert torch.equal(first, second)
+
+
+def test_window_dataset_validates_lengths() -> None:
+    sequences = torch.randn(1, 5, 2)
+    lengths = torch.tensor([6])
+    with pytest.raises(ValueError):
+        TimeseriesWindowDataset(
+            sequences=sequences,
+            lengths=lengths,
+            window_length=4,
+        )

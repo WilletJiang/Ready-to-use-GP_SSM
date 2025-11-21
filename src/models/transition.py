@@ -16,21 +16,25 @@ from .utils import torch_compile
 def _transition_forward_compute(
     kxz: Tensor,
     diag: Tensor,
-    kzz_inv: Tensor,
+    chol: Tensor,
     alpha: Tensor,
 ) -> Tuple[Tensor, Tensor]:
-    mean = kxz @ alpha
-    proj = kxz @ kzz_inv
+    """
+    Compute predictive mean / var without forming Kzz^{-1}.
+
+    kxz: [batch, M]
+    diag: [batch]
+    chol: [M, M] lower-triangular Cholesky of Kzz
+    alpha: [M, state_dim] equals Kzz^{-1} u
+    """
+    mean = kxz @ alpha  # [batch, state_dim]
+    # Solve Kzz^{-1} kxz^T in a numerically stable way
+    solve = torch.cholesky_solve(kxz.transpose(-2, -1), chol)  # [M, batch]
+    proj = solve.transpose(-2, -1)  # [batch, M]
     quad_form = (proj * kxz).sum(dim=-1)
-    var_scalar = diag - quad_form
-    var_scalar = var_scalar.clamp_min(1e-6)
+    var_scalar = (diag - quad_form).clamp_min(1e-6)
     var = var_scalar.unsqueeze(-1).expand_as(mean)
     return mean, var
-
-
-@torch_compile
-def _chol_inverse(chol: Tensor) -> Tensor:
-    return torch.cholesky_inverse(chol)
 
 class SparseGPTransition(PyroModule):
     def __init__(
@@ -87,13 +91,12 @@ class SparseGPTransition(PyroModule):
 
     def precompute(self, u: Tensor, chol: Optional[Tensor] = None) -> Tuple[Tensor, Tensor]:
         """
-        Precompute Kzz^{-1} and the projected inducing mean for reuse across many time steps.
+        Precompute Cholesky and projected inducing mean for reuse across many time steps.
         """
         if chol is None:
             _, chol = self._kzz_and_chol()
-        kzz_inv = _chol_inverse(chol)
-        alpha = kzz_inv @ u.T
-        return kzz_inv, alpha
+        alpha = torch.cholesky_solve(u.T, chol)
+        return chol, alpha
 
     def forward(
         self,
@@ -103,8 +106,7 @@ class SparseGPTransition(PyroModule):
     ) -> Tuple[Tensor, Tensor]:
         evals = self.kernel.evaluate_cross(x_prev, self.inducing_points)
         if cache is None:
-            kzz_inv, alpha = self.precompute(u)
+            chol, alpha = self.precompute(u)
         else:
-            kzz_inv, alpha = cache
-
-        return _transition_forward_compute(evals.kxz, evals.diag, kzz_inv, alpha)
+            chol, alpha = cache
+        return _transition_forward_compute(evals.kxz, evals.diag, chol, alpha)
