@@ -23,6 +23,7 @@ class SparseVariationalGPSSM(PyroModule):
         obs_dim: int,
         process_noise_init: float,
         obs_noise_init: float,
+        structured_q: bool = False,
     ) -> None:
         super().__init__()
         if obs_dim <= 0:
@@ -39,6 +40,7 @@ class SparseVariationalGPSSM(PyroModule):
         )
         self.state_dim = transition.state_dim
         self.obs_dim = obs_dim
+        self.structured_q = structured_q
         self.min_noise = 1e-5
         u_dim = transition.u_dim
         eye = torch.eye(u_dim)
@@ -113,16 +115,27 @@ class SparseVariationalGPSSM(PyroModule):
         batch_size, horizon, _ = y.shape
         encoding = self.encoder(y, lengths)
         init_scale = encoding.init_scale
+        trans_matrix = encoding.trans_matrix
+        trans_bias = encoding.trans_bias
         with pyro.plate("batch", batch_size):
-            pyro.sample(
+            x_prev = pyro.sample(
                 "x_0",
                 dist.Normal(encoding.init_loc, init_scale).to_event(1),
             )
             for t in range(horizon):
-                pyro.sample(
+                if self.structured_q:
+                    if trans_matrix is None or trans_bias is None:
+                        msg = "Encoder must produce transition parameters when structured_q is True"
+                        raise RuntimeError(msg)
+                    aff = torch.einsum("bij,bj->bi", trans_matrix[:, t, :, :], x_prev)
+                    mean = aff + trans_bias[:, t, :]
+                else:
+                    mean = encoding.loc[:, t, :]
+                scale = encoding.scale[:, t, :]
+                x_prev = pyro.sample(
                     f"x_{t+1}",
                     dist.Normal(
-                        encoding.loc[:, t, :],
-                        encoding.scale[:, t, :],
+                        mean,
+                        scale,
                     ).to_event(1),
                 )

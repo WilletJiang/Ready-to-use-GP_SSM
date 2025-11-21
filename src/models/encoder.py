@@ -13,6 +13,8 @@ class EncoderOutput:
     init_scale: Tensor
     loc: Tensor
     scale: Tensor
+    trans_matrix: Optional[Tensor] = None
+    trans_bias: Optional[Tensor] = None
 
 
 class StateEncoder(nn.Module):
@@ -22,10 +24,15 @@ class StateEncoder(nn.Module):
         state_dim: int,
         hidden_size: int,
         num_layers: int,
+        structured: bool = False,
+        max_transition_scale: float = 0.5,
     ) -> None:
         super().__init__()
         if hidden_size <= 0:
             msg = "hidden_size must be positive"
+            raise ValueError(msg)
+        if max_transition_scale <= 0:
+            msg = "max_transition_scale must be positive"
             raise ValueError(msg)
         self.bidirectional = True
         self.gru = nn.GRU(
@@ -41,6 +48,11 @@ class StateEncoder(nn.Module):
         self.init_loc_head = nn.Linear(proj_dim, state_dim)
         self.init_scale_head = nn.Linear(proj_dim, state_dim)
         self.softplus = nn.Softplus()
+        self.structured = structured
+        self.max_transition_scale = max_transition_scale
+        if structured:
+            self.trans_matrix_head = nn.Linear(proj_dim, state_dim * state_dim)
+            self.trans_bias_head = nn.Linear(proj_dim, state_dim)
 
     def forward(
         self,
@@ -67,4 +79,23 @@ class StateEncoder(nn.Module):
         init_context = padded[:, 0, :]
         init_loc = self.init_loc_head(init_context)
         init_scale = self.softplus(self.init_scale_head(init_context)) + 1e-4
-        return EncoderOutput(init_loc=init_loc, init_scale=init_scale, loc=loc, scale=scale)
+        trans_matrix = None
+        trans_bias = None
+        if self.structured:
+            raw_matrix = self.trans_matrix_head(padded)
+            trans_matrix = raw_matrix.view(
+                raw_matrix.size(0),
+                raw_matrix.size(1),
+                loc.size(-1),
+                loc.size(-1),
+            )
+            trans_matrix = trans_matrix.tanh() * self.max_transition_scale
+            trans_bias = self.trans_bias_head(padded)
+        return EncoderOutput(
+            init_loc=init_loc,
+            init_scale=init_scale,
+            loc=loc,
+            scale=scale,
+            trans_matrix=trans_matrix,
+            trans_bias=trans_bias,
+        )

@@ -25,3 +25,4 @@
 ## Extension Hooks
 - Condition on control inputs by concatenating them into the state fed to the GP transition.
 - Enable multi-start hyper-parameter training via parallel Pyro SVI instances orchestrated at the script level.
+- **Variational family options**: default guide assumes independent `q(x_t)`. A structured option (`q_structure: markov`) parameterizes `q(x_t | x_{t-1}) = N(A_t x_{t-1} + b_t, diag(σ_t^2))`, producing a block-tridiagonal precision with O(T) complexity and better temporal coherence. Controlled via `model.q_structure` in configs.
