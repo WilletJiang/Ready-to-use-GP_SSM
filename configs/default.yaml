@@ -37,3 +37,9 @@ synthetic_data:
     test: 0.15
   eval_window_length: 256
   forecast_horizon: 32
+
+forecast:
+  num_samples: 64
+  return_std: true
+  moment_matching: false
+  return_samples: false

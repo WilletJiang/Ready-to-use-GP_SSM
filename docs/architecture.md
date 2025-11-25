@@ -16,7 +16,7 @@
 2. `TimeseriesWindowDataset` is responsible for windowing and padding, with different window lengths available for training/evaluation.
 3. Instantiate `SparseVariationalGPSSM` and build a `Trace_ELBO` trainer through `SVITrainer`.
 4. The training loop triggers `evaluate_model` every `eval_every` steps, reporting RMSE/NLL/latent RMSE; after termination, re-evaluate on val/test.
-5. `rollout_forecast` uses discounted posterior mean + GP transition mean for multi-step forward prediction, measuring the prediction performance in system identification/control scenarios.
+5. `rollout_forecast` now Monte Carlo–propagates the GP transition (including process noise) and adds observation noise to return mean/std (or samples) over the forecast horizon; a moment-matching fallback is kept for affine observation models.
 
 ## Complexity
 - Kernel factorizations operate on `M x M` matrices; choosing `M <= 64` keeps Cholesky `O(M^3)` cost cheap relative to sequence unrolling.

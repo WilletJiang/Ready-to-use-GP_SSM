@@ -20,7 +20,7 @@ def _transition_forward_compute(
     alpha: Tensor,
 ) -> Tuple[Tensor, Tensor]:
     """
-    Compute predictive mean / var without forming Kzz^{-1}.
+    Compute predictive mean and variance without forming Kzz^{-1}.
 
     kxz: [batch, M]
     diag: [batch]
@@ -28,7 +28,6 @@ def _transition_forward_compute(
     alpha: [M, state_dim] equals Kzz^{-1} u
     """
     mean = kxz @ alpha  # [batch, state_dim]
-    # Solve Kzz^{-1} kxz^T in a numerically stable way
     solve = torch.cholesky_solve(kxz.transpose(-2, -1), chol)  # [M, batch]
     proj = solve.transpose(-2, -1)  # [batch, M]
     quad_form = (proj * kxz).sum(dim=-1)
@@ -90,9 +89,6 @@ class SparseGPTransition(PyroModule):
         return kzz, chol
 
     def precompute(self, u: Tensor, chol: Optional[Tensor] = None) -> Tuple[Tensor, Tensor]:
-        """
-        Precompute Cholesky and projected inducing mean for reuse across many time steps.
-        """
         if chol is None:
             _, chol = self._kzz_and_chol()
         alpha = torch.cholesky_solve(u.T, chol)

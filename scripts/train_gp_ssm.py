@@ -254,7 +254,28 @@ def train(
         forecast_horizon = data_cfg.get("forecast_horizon", 16)
         context_tensor = sample[:, :context, :]
         context_lengths = torch.full_like(sample_lengths, context)
-        preds = rollout_forecast(model, context_tensor, context_lengths, forecast_horizon)
+        forecast_cfg = cfg.get("forecast", {})
+        forecast_num_samples = forecast_cfg.get("num_samples", 64)
+        forecast_return_std = forecast_cfg.get("return_std", True)
+        forecast_moment_match = forecast_cfg.get("moment_matching", False)
+        forecast_return_samples = forecast_cfg.get("return_samples", False)
+
+        forecast = rollout_forecast(
+            model,
+            context_tensor,
+            context_lengths,
+            forecast_horizon,
+            num_samples=forecast_num_samples,
+            return_std=forecast_return_std,
+            moment_matching=forecast_moment_match,
+            return_samples=forecast_return_samples,
+        )
+        if isinstance(forecast, dict):
+            preds = forecast["mean"]
+            mean_std = forecast.get("std")
+        else:
+            preds = forecast
+            mean_std = None
         target = sample[:, context : context + forecast_horizon, :]
         if target.size(1) < forecast_horizon:
             pad = torch.zeros(
@@ -271,11 +292,13 @@ def train(
         mse = ((preds - target) ** 2 * horizon_mask.unsqueeze(-1)).sum()
         denom = horizon_mask.sum().clamp_min(1) * model.obs_dim
         forecast_rmse = torch.sqrt(mse / denom)
+        avg_std = float(mean_std.mean().item()) if mean_std is not None else None
         console.print(
             {
                 "forecast_context": int(context),
                 "forecast_horizon": int(forecast_horizon),
                 "forecast_rmse": float(forecast_rmse.item()),
+                "forecast_avg_std": avg_std,
             }
         )
     console.print("Finished training", style="bold blue")

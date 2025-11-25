@@ -66,8 +66,8 @@ The training utilities expose two functions that you can reuse in your own scrip
 
 - `training.evaluation.evaluate_model(model, loader)`
   Computes observation RMSE, NLL, and (if latent ground truth is present) latent RMSE.
-- `training.evaluation.rollout_forecast(model, y_hist, lengths, steps)`
-  Uses the amortized posterior together with the GP transition mean to produce multi-step forecasts, suitable for system identification and control experiments.
+- `training.evaluation.rollout_forecast(model, y_hist, lengths, steps, num_samples=64, return_std=True)`
+  Monte Carlo–propagates the GP transition + process noise and adds observation noise, returning forecast mean and standard deviation (and optionally samples). Set `return_std=False` to keep the legacy mean-only tensor.
 
 Structured variational option:
 

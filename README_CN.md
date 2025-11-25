@@ -62,12 +62,26 @@ python scripts/train_gp_ssm.py train --config configs/default.yaml
 
 - `training.evaluation.evaluate_model(model, loader)`
   计算观测 RMSE、NLL，以及在提供 latent 真值时的 latent RMSE。
- - `training.evaluation.rollout_forecast(model, y_hist, lengths, steps)`
-   使用摊销后验 + GP 转移均值做多步预测，适合系统辨识 / 控制类研究。
+- `training.evaluation.rollout_forecast(model, y_hist, lengths, steps, num_samples=64, return_std=True)`
+  默认用 Monte Carlo 抽样传播 GP 转移 + 过程噪声，并叠加观测噪声，返回预测均值与标准差（也可返回完整样本）。将 `return_std=False` 可保持旧的仅均值张量行为；`moment_matching=True` 时启用仿射观测头下的矩匹配近似。
 
 可选的结构化变分后验：
 
 - 在 YAML 里将 `model.q_structure` 设为 `markov`，即可把独立高斯后验替换为 Markov 结构高斯（块三对角精度），在保持训练复杂度 O(T·D³) 的同时更好地刻画时间相关性；默认的 `independent` 则保持原有行为。
+
+预测配置（采样传播默认开启）：
+
+- 在 YAML 顶层可添加 `forecast` 段控制前滚预测策略，例如：
+
+  ```yaml
+  forecast:
+    num_samples: 64      # 抽样粒子数，>0 启用 Monte Carlo；=0 时退化为矩匹配
+    return_std: true     # 是否返回均值+标准差，false 时仅返回均值张量
+    moment_matching: false  # 强制矩匹配（适合仿射观测头）
+    return_samples: false   # 是否返回完整样本张量 [S, B, steps, obs_dim]
+  ```
+
+  仓库内的默认配置已启用采样传播并返回置信区间。
 
 你也可以直接导入模型与数据模块：
 

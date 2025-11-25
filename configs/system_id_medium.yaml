@@ -36,3 +36,9 @@ data:
     test: 0.15
   eval_window_length: 240
   forecast_horizon: 40
+
+forecast:
+  num_samples: 96
+  return_std: true
+  moment_matching: false
+  return_samples: false
