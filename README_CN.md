@@ -143,6 +143,7 @@ $$
 - **系统辨识场景**：`generate_system_identification_sequences` 模拟控制信号、非线性 drift、过程/观测噪声，与实际控制系统更接近。
 
 两者都返回带有观测、长度与可选 latent 的 `SequenceDataset`。
+噪声参数（`process_noise`、`obs_noise`）表示**标准差**而不是方差。
 
 ### 划分与窗口化
 

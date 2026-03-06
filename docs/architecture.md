@@ -3,13 +3,13 @@
 ## Modeling Choices
 - **Latent Dynamics**: Nonlinear transition `x_t = f(x_{t-1}) + \epsilon_t`, where `f` is a vector-valued GP. We adopt the sparse inducing-point variational family from Frigola et al. (2014), i.e. augment with inducing variables `u = f(Z)` and minimize the KL between `q(u)q(x_{0:T})` and the true posterior.
 - **Kernel**: ARD RBF with logarithmic parametrization, ensuring strictly positive length-scales / amplitude. The kernel is shared across output dimensions; each dimension has its own inducing targets so the overall prior mean is block-diagonal.
-- **Process/Observation Noise**: Diagonal covariances, learnt in log domain to keep positivity without projections.
+- **Process/Observation Noise**: Diagonal noise scales (standard deviations), learned in log domain to keep positivity without projections.
 - **Observation Head**: Default affine head `y_t = C x_t + d + \eta_t`. Swap `AffineObservationModel` for more expressive decoders if needed.
 
 ## Variational Guide
 - `q(u)` is a multivariate normal with free mean and Cholesky factor, implemented via Pyro parameters.
-- `q(x_{0:T})` is amortized by a bi-directional GRU encoder reading the observed sequence and emitting per-time-step mean / log-variance.
-- Masked padding ensures batches of unequal length contribute only where data exist.
+- `q(x_{0:T})` is amortized by a bi-directional GRU encoder reading the observed sequence and emitting per-time-step mean / scale.
+- Masked padding ensures batches of unequal length contribute only where data exist, including both observation and latent transition sites.
 
 ## Training Loop
 1. Generate or load sequence data (toy sine system / system-id nonlinear controlled system), and obtain train/val/test through `split_dataset`.

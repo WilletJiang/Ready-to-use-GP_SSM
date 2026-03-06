@@ -13,6 +13,35 @@ def _mask_from_lengths(lengths: Tensor, horizon: int) -> Tensor:
     return (time < lengths.unsqueeze(1)).to(torch.bool)
 
 
+def _aligned_posterior_sequence(encoding, structured_q: bool) -> tuple[Tensor, Tensor]:
+    batch_size, horizon, state_dim = encoding.loc.shape
+    device = encoding.loc.device
+    dtype = encoding.loc.dtype
+    state_mean = torch.zeros(batch_size, horizon, state_dim, device=device, dtype=dtype)
+    state_scale = torch.zeros_like(state_mean)
+    state_mean[:, 0, :] = encoding.init_loc
+    state_scale[:, 0, :] = encoding.init_scale
+    if horizon == 1:
+        return state_mean, state_scale
+    if structured_q:
+        trans_matrix = encoding.trans_matrix
+        trans_bias = encoding.trans_bias
+        if trans_matrix is None or trans_bias is None:
+            msg = "Encoder must produce transition parameters when structured_q is True"
+            raise RuntimeError(msg)
+        x_prev = encoding.init_loc
+        for t in range(horizon - 1):
+            aff = torch.einsum("bij,bj->bi", trans_matrix[:, t, :, :], x_prev)
+            mean_next = aff + trans_bias[:, t, :]
+            state_mean[:, t + 1, :] = mean_next
+            state_scale[:, t + 1, :] = encoding.scale[:, t, :]
+            x_prev = mean_next
+    else:
+        state_mean[:, 1:, :] = encoding.loc[:, : horizon - 1, :]
+        state_scale[:, 1:, :] = encoding.scale[:, : horizon - 1, :]
+    return state_mean, state_scale
+
+
 def evaluate_model(model, loader) -> Dict[str, float]:
     was_training = model.training
     model.eval()
@@ -28,16 +57,19 @@ def evaluate_model(model, loader) -> Dict[str, float]:
     except StopIteration:
         device = torch.device("cpu")
 
-    with torch.no_grad():
+    with torch.inference_mode():
         for batch in loader:
             y = batch["y"].to(device)
             lengths = batch["lengths"].to(device)
             encoding = model.encoder(y, lengths)
-            loc = encoding.loc
-            batch_size, horizon, _ = loc.shape
+            state_mean, _ = _aligned_posterior_sequence(
+                encoding,
+                getattr(model, "structured_q", False),
+            )
+            batch_size, horizon, _ = state_mean.shape
             mask = _mask_from_lengths(lengths, horizon).to(device).unsqueeze(-1)
-            flat_loc = loc.reshape(batch_size * horizon, state_dim)
-            obs_pred = model.observation(flat_loc).reshape(batch_size, horizon, obs_dim)
+            flat_mean = state_mean.reshape(batch_size * horizon, state_dim)
+            obs_pred = model.observation(flat_mean).reshape(batch_size, horizon, obs_dim)
             diff = y - obs_pred
             rmse_sum += (diff.pow(2) * mask).sum().item()
             obs_count += mask.sum().item() * obs_dim
@@ -50,7 +82,7 @@ def evaluate_model(model, loader) -> Dict[str, float]:
             nll_sum += (nll * mask).sum().item()
             if "latents" in batch:
                 lat = batch["latents"].to(device)
-                latent_diff = loc - lat
+                latent_diff = state_mean - lat
                 latent_rmse_sum += (latent_diff.pow(2) * mask).sum().item()
                 latent_count += mask.sum().item() * state_dim
     if was_training:
@@ -110,17 +142,22 @@ def rollout_forecast(
     except StopIteration:
         device = y_hist.device
 
-    with torch.no_grad():
+    with torch.inference_mode():
         encoding = model.encoder(y_hist, lengths)
+        state_mean, state_scale = _aligned_posterior_sequence(
+            encoding,
+            getattr(model, "structured_q", False),
+        )
         batch_size = y_hist.size(0)
         indices = (lengths - 1).clamp(min=0)
         batch_idx = torch.arange(batch_size, device=encoding.loc.device)
         state_dim = model.state_dim
         obs_dim = model.obs_dim
 
-        init_mean = encoding.loc[batch_idx, indices]
-        init_scale = encoding.scale[batch_idx, indices]
+        init_mean = state_mean[batch_idx, indices]
+        init_scale = state_scale[batch_idx, indices]
         process_noise = model._process_noise().to(init_mean.device)
+        process_var = process_noise.pow(2)
         obs_noise = model._obs_noise().to(init_mean.device)
         u_mean = model.q_u_loc.detach().reshape(
             state_dim,
@@ -140,7 +177,7 @@ def rollout_forecast(
                 mean, var = model.transition(flat_particles, u_mean, cache)
                 mean = mean.view(num_samples, batch_size, state_dim)
                 var = var.view_as(mean)
-                total_state_std = (var + process_noise).clamp_min(1e-9).sqrt()
+                total_state_std = (var + process_var).clamp_min(1e-9).sqrt()
                 particles = mean + torch.randn_like(mean) * total_state_std
                 obs_loc = model.observation(particles.reshape(-1, state_dim))
                 obs_loc = obs_loc.view(num_samples, batch_size, obs_dim)
@@ -157,17 +194,15 @@ def rollout_forecast(
         else:
             # Analytic moment matching (approximate; assumes affine observation)
             weight = None
-            bias = None
             linear = getattr(model.observation, "linear", None)
             if linear is not None:
                 weight = linear.weight  # [obs_dim, state_dim]
-                bias = linear.bias
             preds = []
             stds = [] if return_std else None
             x_prev = init_mean
             for _ in range(steps):
                 mean, var = model.transition(x_prev, u_mean, cache)
-                total_state_var = var + process_noise
+                total_state_var = var + process_var
                 obs_loc = model.observation(mean)
                 preds.append(obs_loc.unsqueeze(1))
                 if return_std:

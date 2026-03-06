@@ -1,16 +1,16 @@
 from __future__ import annotations
 
+import os
 from pathlib import Path
 from typing import Any, Dict, Tuple, Optional
+
+os.environ.setdefault("PYTORCH_ENABLE_MPS_FALLBACK", "1")
 
 import pyro
 import torch
 import typer
 import yaml
-import os
 from rich.console import Console
-if torch.backends.mps.is_available():
-    os.environ["PYTORCH_ENABLE_MPS_FALLBACK"] = "1"
 
 from data.timeseries import (
     TimeseriesWindowDataset,
@@ -118,7 +118,7 @@ def train(
         None,
         exists=True,
         dir_okay=False,
-        help="Path to YAML config file. 若不提供则默认使用 configs/default.yaml。",
+        help="Path to YAML config file. Defaults to configs/default.yaml when omitted.",
     ),
 ) -> None:
     if config is None:
@@ -305,4 +305,4 @@ def train(
 
 
 if __name__ == "__main__":
-    typer.run(train)
+    app()

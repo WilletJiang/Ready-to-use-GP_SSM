@@ -33,14 +33,20 @@ def generate_synthetic_sequences(
     if num_sequences <= 0 or sequence_length <= 0:
         msg = "Dataset dimensions must be positive"
         raise ValueError(msg)
+    if state_dim <= 0 or obs_dim <= 0:
+        msg = "state_dim and obs_dim must be positive"
+        raise ValueError(msg)
+    if process_noise < 0 or obs_noise < 0:
+        msg = "Noise scales must be non-negative"
+        raise ValueError(msg)
     device = device or torch.device("cpu")
     sequences = torch.zeros(num_sequences, sequence_length, obs_dim, device=device)
     latents = torch.zeros(num_sequences, sequence_length, state_dim, device=device)
     lengths = torch.full((num_sequences,), sequence_length, dtype=torch.long, device=device)
     weight = torch.randn(state_dim, state_dim, device=device) * 0.2
     obs_matrix = torch.randn(obs_dim, state_dim, device=device) * observation_gain
-    proc_noise_std = math.sqrt(process_noise)
-    obs_noise_std = math.sqrt(obs_noise)
+    proc_noise_std = process_noise
+    obs_noise_std = obs_noise
     x_prev = torch.randn(num_sequences, state_dim, device=device) * 0.1
     for t in range(sequence_length):
         drift = _sinusoidal_drift(x_prev, weight)
@@ -69,6 +75,12 @@ def generate_system_identification_sequences(
     if num_sequences <= 0 or sequence_length <= 0:
         msg = "Dataset dimensions must be positive"
         raise ValueError(msg)
+    if state_dim <= 0 or obs_dim <= 0:
+        msg = "state_dim and obs_dim must be positive"
+        raise ValueError(msg)
+    if process_noise < 0 or obs_noise < 0:
+        msg = "Noise scales must be non-negative"
+        raise ValueError(msg)
     device = device or torch.device("cpu")
     generator = torch.Generator(device=device)
     generator.manual_seed(seed)
@@ -84,8 +96,8 @@ def generate_system_identification_sequences(
     nonlin = 0.1 * torch.randn(state_dim, state_dim, generator=generator, device=device)
     control_mat = 0.2 * torch.randn(state_dim, state_dim, generator=generator, device=device)
     obs_mat = torch.randn(obs_dim, state_dim, generator=generator, device=device)
-    proc_noise_std = math.sqrt(process_noise)
-    obs_noise_std = math.sqrt(obs_noise)
+    proc_noise_std = process_noise
+    obs_noise_std = obs_noise
     freqs = torch.rand(state_dim, generator=generator, device=device) * 0.5 + 0.2
     phases = torch.rand(state_dim, generator=generator, device=device) * 2 * math.pi
     # Vectorize across sequences; keep temporal recursion
@@ -170,6 +182,9 @@ class TimeseriesWindowDataset(Dataset):
             raise ValueError(msg)
         if torch.any(lengths > sequences.size(1)):
             msg = "lengths entries cannot exceed sequence length"
+            raise ValueError(msg)
+        if window_length is not None and window_length <= 0:
+            msg = "window_length must be positive"
             raise ValueError(msg)
         self.sequences = sequences
         self.lengths = lengths

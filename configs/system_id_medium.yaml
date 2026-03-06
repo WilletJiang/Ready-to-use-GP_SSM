@@ -17,8 +17,8 @@ model:
   q_structure: independent  # set to markov to enable structured q(x)
   kernel:
     jitter: 1.0e-5
-  process_noise_init: 0.05
-  obs_noise_init: 0.05
+  process_noise_init: 0.05  # std
+  obs_noise_init: 0.05      # std
   encoder_hidden: 128
   encoder_layers: 2
 
@@ -27,8 +27,8 @@ data:
   num_sequences: 192
   sequence_length: 240
   dt: 0.1
-  process_noise: 0.02
-  obs_noise: 0.05
+  process_noise: 0.02  # std
+  obs_noise: 0.05      # std
   control_scale: 0.3
   splits:
     train: 0.7

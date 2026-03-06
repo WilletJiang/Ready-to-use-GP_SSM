@@ -19,8 +19,8 @@ model:
     type: ard_rbf
     jitter: 1.0e-5
     params: {}
-  process_noise_init: 0.05
-  obs_noise_init: 0.1
+  process_noise_init: 0.05  # std
+  obs_noise_init: 0.1       # std
   encoder_hidden: 64
   encoder_layers: 2
 
@@ -29,8 +29,8 @@ synthetic_data:
   num_sequences: 64
   sequence_length: 256
   observation_gain: 1.5
-  process_noise: 0.05
-  obs_noise: 0.1
+  process_noise: 0.05  # std
+  obs_noise: 0.1       # std
   splits:
     train: 0.7
     val: 0.15

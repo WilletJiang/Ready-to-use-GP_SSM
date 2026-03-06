@@ -42,14 +42,15 @@ class _DummyObservation(torch.nn.Module):
 
 class _DummyEncoder:
     def __call__(self, y, lengths):
-        # Deterministic posterior matching observations
-        init_loc = y[torch.arange(y.size(0)), lengths - 1]
+        # Deterministic posterior matching observations (aligned with x_t -> y_t)
+        init_loc = y[:, 0, :]
         init_scale = torch.zeros_like(init_loc)
         scale = torch.zeros_like(y)
+        shifted = torch.cat([y[:, 1:, :], y[:, -1:, :]], dim=1)
         return type("EncOut", (), {
             "init_loc": init_loc,
             "init_scale": init_scale,
-            "loc": y,
+            "loc": shifted,
             "scale": scale,
             "trans_matrix": None,
             "trans_bias": None,

@@ -75,30 +75,39 @@ class SparseVariationalGPSSM(PyroModule):
         cache = self.transition.precompute(u, chol)
         init_loc = self.x0_loc.unsqueeze(0).expand(batch_size, -1)
         init_scale = self._x0_scale().unsqueeze(0).expand_as(init_loc)
+        process_noise = self._process_noise()
+        process_var = process_noise.pow(2)
+        obs_scale = self._obs_noise()
         with pyro.plate("batch", batch_size):
             x_prev = pyro.sample(
                 "x_0",
                 dist.Normal(init_loc, init_scale).to_event(1),
             )
             for t in range(horizon):
-                mean, var = self.transition(x_prev, u, cache)
-                noise_var = self._process_noise()
-                total_var = var + noise_var
-                scale = total_var.clamp_min(self.min_noise).sqrt()
-                x_curr = pyro.sample(
-                    f"x_{t+1}",
-                    dist.Normal(mean, scale).to_event(1),
-                )
-                obs_loc = self.observation(x_curr)
-                obs_scale = self._obs_noise()
+                obs_loc = self.observation(x_prev)
                 obs_dist = dist.Normal(obs_loc, obs_scale).to_event(1)
                 obs = y[:, t, :]
                 if lengths is None:
                     pyro.sample(f"y_{t}", obs_dist, obs=obs)
                 else:
-                    mask = t < lengths
-                    with poutine.mask(mask=mask):
+                    obs_mask = t < lengths
+                    with poutine.mask(mask=obs_mask):
                         pyro.sample(f"y_{t}", obs_dist, obs=obs)
+                mean, var = self.transition(x_prev, u, cache)
+                total_var = var + process_var
+                scale = total_var.clamp_min(self.min_noise).sqrt()
+                if lengths is None:
+                    x_curr = pyro.sample(
+                        f"x_{t+1}",
+                        dist.Normal(mean, scale).to_event(1),
+                    )
+                else:
+                    trans_mask = t < (lengths - 1)
+                    with poutine.mask(mask=trans_mask):
+                        x_curr = pyro.sample(
+                            f"x_{t+1}",
+                            dist.Normal(mean, scale).to_event(1),
+                        )
                 x_prev = x_curr
 
     def guide(self, y: Tensor, lengths: Optional[Tensor] = None) -> None:
@@ -132,10 +141,21 @@ class SparseVariationalGPSSM(PyroModule):
                 else:
                     mean = encoding.loc[:, t, :]
                 scale = encoding.scale[:, t, :]
-                x_prev = pyro.sample(
-                    f"x_{t+1}",
-                    dist.Normal(
-                        mean,
-                        scale,
-                    ).to_event(1),
-                )
+                if lengths is None:
+                    x_prev = pyro.sample(
+                        f"x_{t+1}",
+                        dist.Normal(
+                            mean,
+                            scale,
+                        ).to_event(1),
+                    )
+                else:
+                    trans_mask = t < (lengths - 1)
+                    with poutine.mask(mask=trans_mask):
+                        x_prev = pyro.sample(
+                            f"x_{t+1}",
+                            dist.Normal(
+                                mean,
+                                scale,
+                            ).to_event(1),
+                        )

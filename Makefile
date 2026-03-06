@@ -15,4 +15,4 @@ test:
 	pytest -q
 
 train:
-	python scripts/train_gp_ssm.py --config configs/default.yaml
+	python scripts/train_gp_ssm.py train --config configs/default.yaml

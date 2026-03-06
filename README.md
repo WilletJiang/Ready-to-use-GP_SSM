@@ -135,6 +135,7 @@ For a more narrative view of the architecture and extension hooks, see `docs/arc
   Simulates control inputs, nonlinear drift (linear + tanh term), and observation noise, closer to a realistic controlled dynamical system.
 
 Both return a `SequenceDataset` with observations, lengths, and optional latent states.
+Noise parameters (`process_noise`, `obs_noise`) are **standard deviations** (not variances).
 
 ### Dataset splitting & windowing
 
