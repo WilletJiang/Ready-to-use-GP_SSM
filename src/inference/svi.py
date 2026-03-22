@@ -29,7 +29,6 @@ class SVITrainer:
             msg = "Training hyperparameters must be positive"
             raise ValueError(msg)
         self.config = config
-        pyro.clear_param_store()
         elbo = self._make_elbo(config.elbo)
         optim = ClippedAdam({"lr": config.lr, "clip_norm": config.gradient_clip})
         self.svi = SVI(model.model, model.guide, optim, elbo)
@@ -53,12 +52,14 @@ class SVITrainer:
         loader: DataLoader,
         eval_loader: Optional[DataLoader] = None,
         eval_fn: Optional[Callable[[object, DataLoader], Dict[str, float]]] = None,
+        start_step: int = 0,
     ) -> List[Dict[str, float]]:
         path = self.config.checkpoint_dir
         path.mkdir(parents=True, exist_ok=True)
         iterator = self._batch_stream(loader)
         progress = Progress()
-        task = progress.add_task("svi", total=self.config.steps)
+        task = progress.add_task("svi", total=start_step + self.config.steps)
+        progress.update(task, completed=start_step)
         eval_history: List[Dict[str, float]] = []
         try:
             device = next(self.model.parameters()).device
@@ -66,14 +67,18 @@ class SVITrainer:
             device = torch.device("cpu")
 
         with progress:
-            for step in range(1, self.config.steps + 1):
+            for offset in range(1, self.config.steps + 1):
+                step = start_step + offset
                 batch = next(iterator)
                 y = batch["y"].to(device)
                 lengths = batch.get("lengths")
+                controls = batch.get("controls")
                 if lengths is not None:
                     lengths = lengths.to(device)
+                if controls is not None:
+                    controls = controls.to(device)
 
-                loss = self.svi.step(y, lengths)
+                loss = self.svi.step(y, lengths, controls)
                 progress.advance(task)
                 if step % self.config.report_every == 0:
                     progress.log(f"step={step} loss={loss:.2f}")
@@ -89,7 +94,7 @@ class SVITrainer:
                         f"{key}={value:.4f}" for key, value in metrics.items()
                     )
                     progress.log(f"eval@{step}: {metrics_str}")
-                if step == self.config.steps:
+                if offset == self.config.steps:
                     self._save_checkpoint(path / "final.pt", step)
         return eval_history
 

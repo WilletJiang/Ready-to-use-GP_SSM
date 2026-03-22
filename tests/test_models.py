@@ -35,7 +35,10 @@ from models.transition import SparseGPTransition
         lambda dim: RationalQuadraticKernel(input_dim=dim, alpha=0.8),
         lambda dim: PeriodicKernel(input_dim=dim, period=1.2, lengthscale=0.7),
         lambda dim: SumKernel(
-            kernels=[ARDRBFKernel(input_dim=dim), RationalQuadraticKernel(input_dim=dim, alpha=0.5)]
+            kernels=[
+                ARDRBFKernel(input_dim=dim),
+                RationalQuadraticKernel(input_dim=dim, alpha=0.5),
+            ]
         ),
         lambda dim: ProductKernel(
             kernels=[
@@ -162,11 +165,14 @@ def test_system_identification_dataset_split() -> None:
         lengths=splits["train"].lengths,
         window_length=30,
         latents=splits["train"].latents,
+        controls=splits["train"].controls,
     )
     sample = train_dataset[0]
     assert sample["y"].shape[0] == 30
     assert sample["latent"] is not None
+    assert sample["control"] is not None
     assert sample["latent"].shape[1] == splits["train"].latents.size(-1)
+    assert sample["control"].shape[1] == splits["train"].controls.size(-1)
 
 
 def test_window_dataset_is_deterministic_with_generator() -> None:

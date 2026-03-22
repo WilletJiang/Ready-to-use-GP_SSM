@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import os
+from functools import partial
 from pathlib import Path
 from typing import Any, Dict, Tuple, Optional
 
@@ -74,24 +75,26 @@ def _select_device(console: Console) -> torch.device:
     return torch.device("cpu")
 
 
-def _build_kernel_from_config(config: Optional[Dict[str, Any]], state_dim: int) -> Kernel:
+def _build_kernel_from_config(
+    config: Optional[Dict[str, Any]], input_dim: int
+) -> Kernel:
     cfg = config or {}
     kernel_type = cfg.get("type", "ard_rbf").lower()
     jitter = cfg.get("jitter", 1e-5)
     params = cfg.get("params", {})
     if kernel_type == "ard_rbf":
-        return ARDRBFKernel(input_dim=state_dim, jitter=jitter)
+        return ARDRBFKernel(input_dim=input_dim, jitter=jitter)
     if kernel_type == "matern":
         nu = params.get("nu", 1.5)
-        return MaternKernel(input_dim=state_dim, nu=nu, jitter=jitter)
+        return MaternKernel(input_dim=input_dim, nu=nu, jitter=jitter)
     if kernel_type == "rational_quadratic":
         alpha = params.get("alpha", 1.0)
-        return RationalQuadraticKernel(input_dim=state_dim, jitter=jitter, alpha=alpha)
+        return RationalQuadraticKernel(input_dim=input_dim, jitter=jitter, alpha=alpha)
     if kernel_type == "periodic":
         period = params.get("period", 1.0)
         lengthscale = params.get("lengthscale", 1.0)
         return PeriodicKernel(
-            input_dim=state_dim,
+            input_dim=input_dim,
             jitter=jitter,
             period=period,
             lengthscale=lengthscale,
@@ -102,7 +105,7 @@ def _build_kernel_from_config(config: Optional[Dict[str, Any]], state_dim: int) 
             msg = f"{kernel_type} kernel requires a non-empty 'components' list"
             raise ValueError(msg)
         components = [
-            _build_kernel_from_config(component_cfg, state_dim)
+            _build_kernel_from_config(component_cfg, input_dim)
             for component_cfg in components_cfg
         ]
         if kernel_type == "sum":
@@ -112,6 +115,23 @@ def _build_kernel_from_config(config: Optional[Dict[str, Any]], state_dim: int) 
     raise ValueError(msg)
 
 
+def _load_checkpoint(path: Path) -> int:
+    checkpoint = torch.load(path, map_location="cpu")
+    if not isinstance(checkpoint, dict):
+        msg = "Checkpoint must be a dictionary"
+        raise ValueError(msg)
+    params = checkpoint.get("params")
+    if params is None:
+        msg = "Checkpoint is missing 'params'"
+        raise ValueError(msg)
+    pyro.get_param_store().set_state(params)
+    step = checkpoint.get("step", 0)
+    if not isinstance(step, int) or step < 0:
+        msg = "Checkpoint 'step' must be a non-negative integer"
+        raise ValueError(msg)
+    return step
+
+
 @app.command()
 def train(
     config: Optional[Path] = typer.Option(
@@ -119,6 +139,16 @@ def train(
         exists=True,
         dir_okay=False,
         help="Path to YAML config file. Defaults to configs/default.yaml when omitted.",
+    ),
+    resume_from: Optional[Path] = typer.Option(
+        None,
+        exists=True,
+        dir_okay=False,
+        help=(
+            "Optional checkpoint created by SVITrainer. "
+            "When provided, training resumes from that Pyro param store "
+            "and runs for trainer.steps additional optimization steps."
+        ),
     ),
 ) -> None:
     if config is None:
@@ -133,35 +163,12 @@ def train(
     trainer_cfg = cfg["trainer"]
     model_cfg = cfg["model"]
     data_cfg = cfg.get("synthetic_data", cfg.get("data", {}))
+    evaluation_cfg = cfg.get("evaluation", {})
+    forecast_cfg = cfg.get("forecast", {})
     _seed_everything(trainer_cfg["seed"])
     device = _select_device(console)
     console.print(f"Using device: {device}", style="bold green")
 
-    kernel = _build_kernel_from_config(model_cfg.get("kernel"), model_cfg["state_dim"])
-    q_structure = model_cfg.get("q_structure", "independent").lower()
-    structured_q = q_structure in {"markov", "vgm", "structured"}
-    transition = SparseGPTransition(
-        state_dim=model_cfg["state_dim"],
-        num_inducing=model_cfg["inducing_points"],
-        kernel=kernel,
-    )
-    encoder = StateEncoder(
-        obs_dim=model_cfg["obs_dim"],
-        state_dim=model_cfg["state_dim"],
-        hidden_size=model_cfg["encoder_hidden"],
-        num_layers=model_cfg["encoder_layers"],
-        structured=structured_q,
-    )
-    model = SparseVariationalGPSSM(
-        transition=transition,
-        encoder=encoder,
-        observation=None,
-        obs_dim=model_cfg["obs_dim"],
-        process_noise_init=model_cfg["process_noise_init"],
-        obs_noise_init=model_cfg["obs_noise_init"],
-        structured_q=structured_q,
-    )
-    model.to(device)
     dataset_type = data_cfg.get("type", "toy")
     if dataset_type == "toy":
         full_dataset = generate_synthetic_sequences(
@@ -189,6 +196,37 @@ def train(
         msg = f"Unknown dataset type: {dataset_type}"
         raise ValueError(msg)
 
+    control_dim = 0
+    if full_dataset.controls is not None:
+        control_dim = full_dataset.controls.size(-1)
+    transition_input_dim = model_cfg["state_dim"] + control_dim
+    kernel = _build_kernel_from_config(model_cfg.get("kernel"), transition_input_dim)
+    q_structure = model_cfg.get("q_structure", "independent").lower()
+    structured_q = q_structure in {"markov", "vgm", "structured"}
+    transition = SparseGPTransition(
+        state_dim=model_cfg["state_dim"],
+        num_inducing=model_cfg["inducing_points"],
+        kernel=kernel,
+        input_dim=transition_input_dim,
+    )
+    encoder = StateEncoder(
+        obs_dim=model_cfg["obs_dim"],
+        state_dim=model_cfg["state_dim"],
+        hidden_size=model_cfg["encoder_hidden"],
+        num_layers=model_cfg["encoder_layers"],
+        structured=structured_q,
+    )
+    model = SparseVariationalGPSSM(
+        transition=transition,
+        encoder=encoder,
+        observation=None,
+        obs_dim=model_cfg["obs_dim"],
+        process_noise_init=model_cfg["process_noise_init"],
+        obs_noise_init=model_cfg["obs_noise_init"],
+        structured_q=structured_q,
+    )
+    model.to(device)
+
     splits_config = data_cfg.get("splits", {"train": 0.7, "val": 0.15, "test": 0.15})
     split_tuple: Tuple[float, float, float] = (
         splits_config.get("train", 0.7),
@@ -202,6 +240,7 @@ def train(
         lengths=splits["train"].lengths,
         window_length=trainer_cfg["window_length"],
         latents=splits["train"].latents,
+        controls=splits["train"].controls,
     )
     train_loader = build_dataloader(
         train_dataset,
@@ -215,6 +254,7 @@ def train(
         lengths=splits["val"].lengths,
         window_length=eval_window,
         latents=splits["val"].latents,
+        controls=splits["val"].controls,
         generator=eval_generator,
     )
     test_generator = torch.Generator().manual_seed(trainer_cfg["seed"])
@@ -223,10 +263,15 @@ def train(
         lengths=splits["test"].lengths,
         window_length=eval_window,
         latents=splits["test"].latents,
+        controls=splits["test"].controls,
         generator=test_generator,
     )
-    val_loader = build_dataloader(val_dataset, batch_size=trainer_cfg["batch_size"], shuffle=False)
-    test_loader = build_dataloader(test_dataset, batch_size=trainer_cfg["batch_size"], shuffle=False)
+    val_loader = build_dataloader(
+        val_dataset, batch_size=trainer_cfg["batch_size"], shuffle=False
+    )
+    test_loader = build_dataloader(
+        test_dataset, batch_size=trainer_cfg["batch_size"], shuffle=False
+    )
     trainer = SVITrainer(
         model,
         TrainerConfig(
@@ -239,32 +284,75 @@ def train(
             eval_every=trainer_cfg["eval_every"],
         ),
     )
+    if resume_from is None:
+        pyro.clear_param_store()
+        start_step = 0
+    else:
+        start_step = _load_checkpoint(resume_from)
+        console.print(
+            f"Resuming from checkpoint: {resume_from} (step={start_step})",
+            style="bold yellow",
+        )
+    predictive_horizon = evaluation_cfg.get(
+        "predictive_horizon",
+        data_cfg.get("forecast_horizon", 16),
+    )
+    predictive_num_samples = evaluation_cfg.get(
+        "predictive_num_samples",
+        forecast_cfg.get("num_samples", 64),
+    )
+    eval_fn = partial(
+        evaluate_model,
+        predictive_horizon=predictive_horizon,
+        predictive_num_samples=predictive_num_samples,
+    )
     console.print("Launching training", style="bold green")
-    trainer.fit(train_loader, eval_loader=val_loader, eval_fn=evaluate_model)
+    trainer.fit(
+        train_loader,
+        eval_loader=val_loader,
+        eval_fn=eval_fn,
+        start_step=start_step,
+    )
     console.print("Evaluating on validation split", style="bold yellow")
-    val_metrics = evaluate_model(model, val_loader)
+    val_metrics = eval_fn(model, val_loader)
     console.print(val_metrics)
     console.print("Evaluating on test split", style="bold yellow")
-    test_metrics = evaluate_model(model, test_loader)
+    test_metrics = eval_fn(model, test_loader)
     console.print(test_metrics)
     if splits["test"].observations.size(0) > 0:
         sample = splits["test"].observations[:1].to(device)
         sample_lengths = splits["test"].lengths[:1].to(device)
+        sample_controls = None
+        if splits["test"].controls is not None:
+            sample_controls = splits["test"].controls[:1].to(device)
         context = max(1, min(trainer_cfg["window_length"], sample.size(1) // 2))
         forecast_horizon = data_cfg.get("forecast_horizon", 16)
         context_tensor = sample[:, :context, :]
         context_lengths = torch.full_like(sample_lengths, context)
-        forecast_cfg = cfg.get("forecast", {})
         forecast_num_samples = forecast_cfg.get("num_samples", 64)
         forecast_return_std = forecast_cfg.get("return_std", True)
         forecast_moment_match = forecast_cfg.get("moment_matching", False)
         forecast_return_samples = forecast_cfg.get("return_samples", False)
+        future_controls = None
+        if sample_controls is not None:
+            future_controls = sample_controls[
+                :, context : context + forecast_horizon, :
+            ]
+            if future_controls.size(1) < forecast_horizon:
+                control_pad = torch.zeros(
+                    future_controls.size(0),
+                    forecast_horizon - future_controls.size(1),
+                    future_controls.size(2),
+                    device=future_controls.device,
+                )
+                future_controls = torch.cat([future_controls, control_pad], dim=1)
 
         forecast = rollout_forecast(
             model,
             context_tensor,
             context_lengths,
             forecast_horizon,
+            controls=future_controls,
             num_samples=forecast_num_samples,
             return_std=forecast_return_std,
             moment_matching=forecast_moment_match,
@@ -285,10 +373,9 @@ def train(
                 device=target.device,
             )
             target = torch.cat([target, pad], dim=1)
-        horizon_mask = (
-            torch.arange(forecast_horizon, device=preds.device).unsqueeze(0)
-            < (sample_lengths - context).unsqueeze(1).to(preds.device)
-        )
+        horizon_mask = torch.arange(forecast_horizon, device=preds.device).unsqueeze(
+            0
+        ) < (sample_lengths - context).unsqueeze(1).to(preds.device)
         mse = ((preds - target) ** 2 * horizon_mask.unsqueeze(-1)).sum()
         denom = horizon_mask.sum().clamp_min(1) * model.obs_dim
         forecast_rmse = torch.sqrt(mse / denom)

@@ -35,24 +35,32 @@ def _transition_forward_compute(
     var = var_scalar.unsqueeze(-1).expand_as(mean)
     return mean, var
 
+
 class SparseGPTransition(PyroModule):
     def __init__(
         self,
         state_dim: int,
         num_inducing: int,
         kernel: Kernel,
+        input_dim: Optional[int] = None,
     ) -> None:
         super().__init__()
+        input_dim = input_dim or state_dim
         if state_dim <= 0 or num_inducing <= 0:
             msg = "state_dim and num_inducing must be positive"
             raise ValueError(msg)
-        if kernel.input_dim != state_dim:
-            msg = "kernel.input_dim must match state_dim"
+        if input_dim < state_dim:
+            msg = "input_dim must be at least state_dim"
+            raise ValueError(msg)
+        if kernel.input_dim != input_dim:
+            msg = "kernel.input_dim must match input_dim"
             raise ValueError(msg)
         self.state_dim = state_dim
+        self.input_dim = input_dim
+        self.control_dim = input_dim - state_dim
         self.num_inducing = num_inducing
         self.kernel = kernel
-        inducing = torch.randn(num_inducing, state_dim)
+        inducing = torch.randn(num_inducing, input_dim)
         self.inducing_points = nn.Parameter(inducing)
         self.register_buffer("_eye", torch.eye(num_inducing), persistent=False)
 
@@ -88,19 +96,40 @@ class SparseGPTransition(PyroModule):
         chol = torch.linalg.cholesky(kzz)
         return kzz, chol
 
-    def precompute(self, u: Tensor, chol: Optional[Tensor] = None) -> Tuple[Tensor, Tensor]:
+    def precompute(
+        self, u: Tensor, chol: Optional[Tensor] = None
+    ) -> Tuple[Tensor, Tensor]:
         if chol is None:
             _, chol = self._kzz_and_chol()
         alpha = torch.cholesky_solve(u.T, chol)
         return chol, alpha
+
+    def _prepare_inputs(self, x_prev: Tensor, controls: Optional[Tensor]) -> Tensor:
+        if controls is None:
+            if self.control_dim != 0:
+                msg = "controls are required when transition.control_dim > 0"
+                raise ValueError(msg)
+            return x_prev
+        if controls.ndim != x_prev.ndim:
+            msg = "controls must have the same rank as x_prev"
+            raise ValueError(msg)
+        if controls.shape[:-1] != x_prev.shape[:-1]:
+            msg = "controls must align with x_prev on all non-feature dimensions"
+            raise ValueError(msg)
+        if controls.size(-1) != self.control_dim:
+            msg = "controls feature dimension must match transition.control_dim"
+            raise ValueError(msg)
+        return torch.cat([x_prev, controls], dim=-1)
 
     def forward(
         self,
         x_prev: Tensor,
         u: Tensor,
         cache: Optional[Tuple[Tensor, Tensor]] = None,
+        controls: Optional[Tensor] = None,
     ) -> Tuple[Tensor, Tensor]:
-        evals = self.kernel.evaluate_cross(x_prev, self.inducing_points)
+        inputs = self._prepare_inputs(x_prev, controls)
+        evals = self.kernel.evaluate_cross(inputs, self.inducing_points)
         if cache is None:
             chol, alpha = self.precompute(u)
         else:

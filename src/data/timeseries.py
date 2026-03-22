@@ -18,6 +18,7 @@ class SequenceDataset:
     observations: Tensor
     lengths: Tensor
     latents: Optional[Tensor] = None
+    controls: Optional[Tensor] = None
 
 
 def generate_synthetic_sequences(
@@ -42,22 +43,36 @@ def generate_synthetic_sequences(
     device = device or torch.device("cpu")
     sequences = torch.zeros(num_sequences, sequence_length, obs_dim, device=device)
     latents = torch.zeros(num_sequences, sequence_length, state_dim, device=device)
-    lengths = torch.full((num_sequences,), sequence_length, dtype=torch.long, device=device)
+    lengths = torch.full(
+        (num_sequences,), sequence_length, dtype=torch.long, device=device
+    )
     weight = torch.randn(state_dim, state_dim, device=device) * 0.2
     obs_matrix = torch.randn(obs_dim, state_dim, device=device) * observation_gain
     proc_noise_std = process_noise
     obs_noise_std = obs_noise
     x_prev = torch.randn(num_sequences, state_dim, device=device) * 0.1
-    for t in range(sequence_length):
+    obs_noise_sample = (
+        torch.randn(num_sequences, obs_dim, device=device) * obs_noise_std
+    )
+    latents[:, 0] = x_prev
+    sequences[:, 0] = x_prev @ obs_matrix.T + obs_noise_sample
+    for t in range(1, sequence_length):
         drift = _sinusoidal_drift(x_prev, weight)
         noise = torch.randn(num_sequences, state_dim, device=device) * proc_noise_std
         x_curr = x_prev + 0.1 * drift + noise
-        obs_noise = torch.randn(num_sequences, obs_dim, device=device) * obs_noise_std
-        y = x_curr @ obs_matrix.T + obs_noise
+        obs_noise_sample = (
+            torch.randn(num_sequences, obs_dim, device=device) * obs_noise_std
+        )
+        y = x_curr @ obs_matrix.T + obs_noise_sample
         latents[:, t] = x_curr
         sequences[:, t] = y
         x_prev = x_curr
-    return SequenceDataset(observations=sequences, lengths=lengths, latents=latents)
+    return SequenceDataset(
+        observations=sequences,
+        lengths=lengths,
+        latents=latents,
+        controls=None,
+    )
 
 
 def generate_system_identification_sequences(
@@ -86,7 +101,10 @@ def generate_system_identification_sequences(
     generator.manual_seed(seed)
     obs = torch.zeros(num_sequences, sequence_length, obs_dim, device=device)
     latents = torch.zeros(num_sequences, sequence_length, state_dim, device=device)
-    lengths = torch.full((num_sequences,), sequence_length, dtype=torch.long, device=device)
+    controls = torch.zeros(num_sequences, sequence_length, state_dim, device=device)
+    lengths = torch.full(
+        (num_sequences,), sequence_length, dtype=torch.long, device=device
+    )
     lin = -0.25 * torch.eye(state_dim, device=device) + 0.05 * torch.randn(
         state_dim,
         state_dim,
@@ -94,16 +112,32 @@ def generate_system_identification_sequences(
         device=device,
     )
     nonlin = 0.1 * torch.randn(state_dim, state_dim, generator=generator, device=device)
-    control_mat = 0.2 * torch.randn(state_dim, state_dim, generator=generator, device=device)
+    control_mat = 0.2 * torch.randn(
+        state_dim, state_dim, generator=generator, device=device
+    )
     obs_mat = torch.randn(obs_dim, state_dim, generator=generator, device=device)
     proc_noise_std = process_noise
     obs_noise_std = obs_noise
     freqs = torch.rand(state_dim, generator=generator, device=device) * 0.5 + 0.2
     phases = torch.rand(state_dim, generator=generator, device=device) * 2 * math.pi
     # Vectorize across sequences; keep temporal recursion
-    x_prev = torch.randn(num_sequences, state_dim, device=device, generator=generator) * 0.1
-    for t in range(sequence_length):
+    x_prev = (
+        torch.randn(num_sequences, state_dim, device=device, generator=generator) * 0.1
+    )
+    obs_noise_sample = (
+        torch.randn(
+            num_sequences,
+            obs_dim,
+            generator=generator,
+            device=device,
+        )
+        * obs_noise_std
+    )
+    latents[:, 0] = x_prev
+    obs[:, 0] = torch.tanh(x_prev) @ obs_mat.T + obs_noise_sample
+    for t in range(sequence_length - 1):
         control = control_scale * torch.sin(freqs * (t * dt) + phases)  # [state_dim]
+        controls[:, t] = control.unsqueeze(0).expand(num_sequences, -1)
         # drift = lin @ x_prev + tanh(nonlin @ x_prev) + control_mat @ control
         drift_lin = x_prev @ lin.T
         drift_nonlin = torch.tanh(x_prev @ nonlin.T)
@@ -120,7 +154,7 @@ def generate_system_identification_sequences(
         )
         x_curr = x_prev + dt * drift + noise
         x_curr = torch.clamp(x_curr, -3.0, 3.0)
-        obs_noise = (
+        obs_noise_sample = (
             torch.randn(
                 num_sequences,
                 obs_dim,
@@ -129,11 +163,16 @@ def generate_system_identification_sequences(
             )
             * obs_noise_std
         )
-        y = torch.tanh(x_curr) @ obs_mat.T + obs_noise
-        latents[:, t] = x_curr
-        obs[:, t] = y
+        y = torch.tanh(x_curr) @ obs_mat.T + obs_noise_sample
+        latents[:, t + 1] = x_curr
+        obs[:, t + 1] = y
         x_prev = x_curr
-    return SequenceDataset(observations=obs, lengths=lengths, latents=latents)
+    return SequenceDataset(
+        observations=obs,
+        lengths=lengths,
+        latents=latents,
+        controls=controls,
+    )
 
 
 def split_dataset(
@@ -160,6 +199,7 @@ def split_dataset(
             observations=dataset.observations[idx],
             lengths=dataset.lengths[idx],
             latents=dataset.latents[idx] if dataset.latents is not None else None,
+            controls=dataset.controls[idx] if dataset.controls is not None else None,
         )
 
     return {split: _slice(idx) for split, idx in indices.items()}
@@ -172,6 +212,7 @@ class TimeseriesWindowDataset(Dataset):
         lengths: Tensor,
         window_length: Optional[int],
         latents: Optional[Tensor] = None,
+        controls: Optional[Tensor] = None,
         generator: Optional[torch.Generator] = None,
     ) -> None:
         if sequences.ndim != 3:
@@ -189,8 +230,12 @@ class TimeseriesWindowDataset(Dataset):
         self.sequences = sequences
         self.lengths = lengths
         self.latents = latents
+        self.controls = controls
         if latents is not None and latents.shape[:2] != sequences.shape[:2]:
             msg = "latents must align with sequences on batch and time dimensions"
+            raise ValueError(msg)
+        if controls is not None and controls.shape[:2] != sequences.shape[:2]:
+            msg = "controls must align with sequences on batch and time dimensions"
             raise ValueError(msg)
         full_length = sequences.size(1)
         self.window_length = window_length or full_length
@@ -245,15 +290,30 @@ class TimeseriesWindowDataset(Dataset):
             latent_seq = self.latents[idx]
             if pad_len > 0:
                 latent_window = latent_seq[:length]
-                latent_pad = torch.zeros(pad_len, latent_seq.size(-1), device=seq.device)
+                latent_pad = torch.zeros(
+                    pad_len, latent_seq.size(-1), device=seq.device
+                )
                 latent_window = torch.cat([latent_window, latent_pad], dim=0)
             else:
                 end = start + window.size(0)
                 latent_window = latent_seq[start:end]
+        control_window = None
+        if self.controls is not None:
+            control_seq = self.controls[idx]
+            if pad_len > 0:
+                control_window = control_seq[:length]
+                control_pad = torch.zeros(
+                    pad_len, control_seq.size(-1), device=seq.device
+                )
+                control_window = torch.cat([control_window, control_pad], dim=0)
+            else:
+                end = start + window.size(0)
+                control_window = control_seq[start:end]
         return {
             "y": window,
             "length": torch.tensor(min(length, target_window), dtype=torch.long),
             "latent": latent_window,
+            "control": control_window,
         }
 
 
@@ -270,11 +330,18 @@ def build_dataloader(
         ys = torch.stack([item["y"] for item in batch], dim=0)
         lens = torch.stack([item["length"] for item in batch], dim=0)
         latents = None
+        controls = None
         if batch[0]["latent"] is not None:
             latents = torch.stack([item["latent"] for item in batch], dim=0)
+        if batch[0]["control"] is not None:
+            controls = torch.stack([item["control"] for item in batch], dim=0)
         result = {"y": ys, "lengths": lens}
         if latents is not None:
             result["latents"] = latents
+        if controls is not None:
+            result["controls"] = controls
         return result
 
-    return DataLoader(dataset, batch_size=batch_size, shuffle=shuffle, collate_fn=_collate)
+    return DataLoader(
+        dataset, batch_size=batch_size, shuffle=shuffle, collate_fn=_collate
+    )

@@ -29,6 +29,7 @@ def torch_compile(func):
                 RuntimeWarning,
             )
             return func
+
         def _is_compile_error(err: Exception) -> bool:
             try:
                 from torch._dynamo.exc import BackendCompilerFailed

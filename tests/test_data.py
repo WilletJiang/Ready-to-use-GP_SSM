@@ -3,7 +3,6 @@ import torch
 
 from data.timeseries import (
     TimeseriesWindowDataset,
-    build_dataloader,
     generate_system_identification_sequences,
 )
 
@@ -28,11 +27,14 @@ def test_system_identification_dataset_split() -> None:
         lengths=splits["train"].lengths,
         window_length=30,
         latents=splits["train"].latents,
+        controls=splits["train"].controls,
     )
     sample = train_dataset[0]
     assert sample["y"].shape[0] == 30
     assert sample["latent"] is not None
+    assert sample["control"] is not None
     assert sample["latent"].shape[1] == splits["train"].latents.size(-1)
+    assert sample["control"].shape[1] == splits["train"].controls.size(-1)
 
 
 def test_window_dataset_is_deterministic_with_generator() -> None:

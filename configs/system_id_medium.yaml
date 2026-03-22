@@ -42,3 +42,7 @@ forecast:
   return_std: true
   moment_matching: false
   return_samples: false
+
+evaluation:
+  predictive_horizon: 40
+  predictive_num_samples: 96

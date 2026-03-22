@@ -64,10 +64,29 @@ class SparseVariationalGPSSM(PyroModule):
     def _x0_scale(self) -> Tensor:
         return self.x0_log_scale.exp() + self.min_noise
 
-    def model(self, y: Tensor, lengths: Optional[Tensor] = None) -> None:
+    def _validate_controls(self, y: Tensor, controls: Optional[Tensor]) -> None:
+        if controls is None:
+            if self.transition.control_dim != 0:
+                msg = "controls are required when transition.control_dim > 0"
+                raise ValueError(msg)
+            return
+        if controls.shape[:2] != y.shape[:2]:
+            msg = "controls must align with y on batch and time dimensions"
+            raise ValueError(msg)
+        if controls.size(-1) != self.transition.control_dim:
+            msg = "controls feature dimension must match transition.control_dim"
+            raise ValueError(msg)
+
+    def model(
+        self,
+        y: Tensor,
+        lengths: Optional[Tensor] = None,
+        controls: Optional[Tensor] = None,
+    ) -> None:
         pyro.module("observation", self.observation)
         pyro.module("transition", self.transition)
         pyro.module("encoder", self.encoder)
+        self._validate_controls(y, controls)
         batch_size, horizon, _ = y.shape
         prior_dist, chol = self.transition.prior(return_chol=True)
         u_sample = pyro.sample("u", prior_dist)
@@ -93,7 +112,8 @@ class SparseVariationalGPSSM(PyroModule):
                     obs_mask = t < lengths
                     with poutine.mask(mask=obs_mask):
                         pyro.sample(f"y_{t}", obs_dist, obs=obs)
-                mean, var = self.transition(x_prev, u, cache)
+                control_t = controls[:, t, :] if controls is not None else None
+                mean, var = self.transition(x_prev, u, cache, controls=control_t)
                 total_var = var + process_var
                 scale = total_var.clamp_min(self.min_noise).sqrt()
                 if lengths is None:
@@ -110,10 +130,16 @@ class SparseVariationalGPSSM(PyroModule):
                         )
                 x_prev = x_curr
 
-    def guide(self, y: Tensor, lengths: Optional[Tensor] = None) -> None:
+    def guide(
+        self,
+        y: Tensor,
+        lengths: Optional[Tensor] = None,
+        controls: Optional[Tensor] = None,
+    ) -> None:
         pyro.module("observation", self.observation)
         pyro.module("transition", self.transition)
         pyro.module("encoder", self.encoder)
+        self._validate_controls(y, controls)
         pyro.sample(
             "u",
             dist.MultivariateNormal(

@@ -28,22 +28,22 @@ The goal is convenience: generate time series, train a GPSSM, evaluate forecasti
 
 ## 1. Installation
 
-We recommend an isolated virtual environment with Python ≥ 3.10. See `pyproject.toml` for the authoritative dependency list.
+We recommend a Miniconda/Conda environment with Python 3.10. See `pyproject.toml` for the authoritative dependency list.
 
 ```bash
-python -m venv .venv
-source .venv/bin/activate
-pip install --upgrade pip
-pip install "torch>=2.2.0,<2.3.0" "pyro-ppl>=1.9.1,<1.10" numpy pyyaml typer rich
-pip install -e .
+conda env create -f environment.yml
+conda activate gp-ssm
 ```
 
-`pip install -e .` registers the package `gp-ssm` in editable mode and exposes the modules under `src/`.
+`environment.yml` installs the runtime and development dependencies and finishes with `pip install -e .`, which registers the package `gp-ssm` in editable mode and exposes the modules under `src/`.
 
-For reproducing experiments or running tests, install the optional development dependencies:
+If you prefer manual setup inside an existing conda environment:
 
 ```bash
+pip install --upgrade pip
+pip install "torch>=2.2.0,<2.3.0" "pyro-ppl>=1.9.1,<1.10" numpy pyyaml typer rich
 pip install pytest black ruff mypy
+pip install -e .
 ```
 
 ---
@@ -58,15 +58,16 @@ python scripts/train_gp_ssm.py train --config configs/default.yaml
 
 - The script automatically selects **MPS / CUDA / CPU** depending on availability and prints the device.
 - `--config` can be any YAML file; see `configs/system_id_medium.yaml` for a system-identification setting.
-- During training the script periodically reports **RMSE / NLL** on the validation split and, at the end, evaluates both validation and test sets and prints a **rollout forecast RMSE**.
+- During training the script periodically reports **RMSE / reconstruction NLL / predictive log-likelihood** on the validation split and, at the end, evaluates both validation and test sets and prints a **rollout forecast RMSE**.
+- To continue from a saved checkpoint, pass `--resume-from path/to/final.pt`. The resumed run keeps the saved Pyro param store and executes `trainer.steps` additional optimization steps.
 
 ### Evaluate & forecast
 
 The training utilities expose two functions that you can reuse in your own scripts:
 
 - `training.evaluation.evaluate_model(model, loader)`
-  Computes observation RMSE, NLL, and (if latent ground truth is present) latent RMSE.
-- `training.evaluation.rollout_forecast(model, y_hist, lengths, steps, num_samples=64, return_std=True)`
+  Computes observation RMSE, reconstruction NLL, held-out predictive log-likelihood/NLL, and (if latent ground truth is present) latent RMSE.
+- `training.evaluation.rollout_forecast(model, y_hist, lengths, steps, controls=None, num_samples=64, return_std=True)`
   Monte Carlo–propagates the GP transition + process noise and adds observation noise, returning forecast mean and standard deviation (and optionally samples). Set `return_std=False` to keep the legacy mean-only tensor.
 
 Structured variational option:
@@ -134,19 +135,20 @@ For a more narrative view of the architecture and extension hooks, see `docs/arc
 - **System identification benchmark** — `generate_system_identification_sequences`
   Simulates control inputs, nonlinear drift (linear + tanh term), and observation noise, closer to a realistic controlled dynamical system.
 
-Both return a `SequenceDataset` with observations, lengths, and optional latent states.
+Both return a `SequenceDataset` with observations, lengths, optional latent states, and optional control inputs.
 Noise parameters (`process_noise`, `obs_noise`) are **standard deviations** (not variances).
 
 ### Dataset splitting & windowing
 
 - `split_dataset(dataset, (train, val, test), seed)` splits sequences by index with a fixed random seed for reproducibility.
-- `TimeseriesWindowDataset` takes sequences and lengths and produces fixed-length windows, with zero-padding and length masks. Latent states are windowed consistently when available.
-- `build_dataloader` wraps this in a `torch.utils.data.DataLoader` with a custom collate function that packs `y`, `lengths`, and optional `latents`.
+- `TimeseriesWindowDataset` takes sequences and lengths and produces fixed-length windows, with zero-padding and length masks. Latent states and control inputs are windowed consistently when available.
+- `build_dataloader` wraps this in a `torch.utils.data.DataLoader` with a custom collate function that packs `y`, `lengths`, and optional `latents` / `controls`.
 
 ### Metrics
 
 - **RMSE** — root-mean-squared error on observations, masked by sequence lengths.
-- **NLL** — analytic Gaussian negative log-likelihood under the observation noise estimated by the model.
+- **Reconstruction NLL** — analytic Gaussian negative log-likelihood under the observation noise, evaluated from the encoder posterior mean.
+- **Predictive log-likelihood / NLL** — Monte Carlo estimate of the held-out posterior predictive density for a future horizon conditioned on the context segment.
 - **Latent RMSE** — optional, when latent ground truth is present in the dataset.
 - **Forecast RMSE** — computed via `rollout_forecast` in `scripts/train_gp_ssm.py` for a chosen context window and horizon.
 
@@ -175,9 +177,9 @@ The code is designed to be modified:
 
   Custom kernels simply need to subclass `models.kernels.Kernel` and implement `forward`/`diag`; they can then be referenced with a new `type` string.
 - **Custom observation / encoder.** Any PyTorch / PyroModule can be used as the observation head or encoder. For example, you can plug in a CNN-based decoder for images or a Transformer encoder for long, irregular sequences.
-- **Control inputs.** To model controlled systems, extend the transition to take concatenated `(x_t, u_t)` as input. The synthetic system-identification generator already simulates control signals, which you can feed into a modified transition.
+- **Control inputs.** Controlled datasets can now carry optional `controls` tensors end-to-end; the GP transition consumes concatenated `(x_t, u_t)` automatically when controls are present.
 - **New experiment configs.** Add YAML files under `configs/` to define new experimental regimes (state dimension, number of inducing points, window length, noise scales, etc.). The training script reads these without changes.
-- **Checkpointing & continuation.** `SVITrainer` saves a `final.pt` checkpoint containing the Pyro parameter store. You can load it via `pyro.get_param_store().load_state_dict` to resume training or run additional evaluation.
+- **Checkpointing & continuation.** `SVITrainer` saves a `final.pt` checkpoint containing the Pyro parameter store. Fresh training jobs clear the param store explicitly; continuation is supported directly via `python scripts/train_gp_ssm.py train --config ... --resume-from path/to/final.pt`.
 
 ---
 

@@ -19,7 +19,10 @@ def test_kernel_variants_shapes() -> None:
         lambda dim: RationalQuadraticKernel(input_dim=dim, alpha=0.8),
         lambda dim: PeriodicKernel(input_dim=dim, period=1.2, lengthscale=0.7),
         lambda dim: SumKernel(
-            kernels=[ARDRBFKernel(input_dim=dim), RationalQuadraticKernel(input_dim=dim, alpha=0.5)]
+            kernels=[
+                ARDRBFKernel(input_dim=dim),
+                RationalQuadraticKernel(input_dim=dim, alpha=0.5),
+            ]
         ),
         lambda dim: ProductKernel(
             kernels=[

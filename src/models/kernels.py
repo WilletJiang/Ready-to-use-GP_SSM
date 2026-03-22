@@ -23,13 +23,17 @@ def _scaled_sq_dist(x: Tensor, y: Tensor, lengthscale: Tensor) -> Tensor:
 
 
 @torch_compile
-def _rbf_forward_impl(x: Tensor, y: Tensor, lengthscale: Tensor, outputscale: Tensor) -> Tensor:
+def _rbf_forward_impl(
+    x: Tensor, y: Tensor, lengthscale: Tensor, outputscale: Tensor
+) -> Tensor:
     sq_dist = _scaled_sq_dist(x, y, lengthscale)
     return outputscale * torch.exp(-0.5 * sq_dist)
 
 
 @torch_compile
-def _rbf_gram_impl(inducing: Tensor, lengthscale: Tensor, outputscale: Tensor, jitter: float) -> Tensor:
+def _rbf_gram_impl(
+    inducing: Tensor, lengthscale: Tensor, outputscale: Tensor, jitter: float
+) -> Tensor:
     kzz = _rbf_forward_impl(inducing, inducing, lengthscale, outputscale)
     eye = torch.eye(
         inducing.size(-2),
@@ -120,7 +124,9 @@ class ARDRBFKernel(Kernel):
 
 
 @torch_compile
-def _matern_forward_impl(x: Tensor, y: Tensor, lengthscale: Tensor, outputscale: Tensor, nu: float) -> Tensor:
+def _matern_forward_impl(
+    x: Tensor, y: Tensor, lengthscale: Tensor, outputscale: Tensor, nu: float
+) -> Tensor:
     sq_dist = _scaled_sq_dist(x, y, lengthscale)
     dist = sq_dist.clamp_min(1e-12).sqrt()
     if nu == 0.5:
@@ -179,7 +185,9 @@ def _rq_forward_impl(
 
 
 class RationalQuadraticKernel(Kernel):
-    def __init__(self, input_dim: int, jitter: float = 1e-5, alpha: float = 1.0) -> None:
+    def __init__(
+        self, input_dim: int, jitter: float = 1e-5, alpha: float = 1.0
+    ) -> None:
         if alpha <= 0:
             msg = "alpha must be positive"
             raise ValueError(msg)
@@ -224,7 +232,9 @@ class PeriodicKernel(Kernel):
             msg = "lengthscale must be positive"
             raise ValueError(msg)
         super().__init__(input_dim=input_dim, jitter=jitter)
-        self.log_lengthscale = nn.Parameter(torch.full((input_dim,), math.log(lengthscale)))
+        self.log_lengthscale = nn.Parameter(
+            torch.full((input_dim,), math.log(lengthscale))
+        )
         self.log_outputscale = nn.Parameter(torch.zeros(1))
         self.log_period = nn.Parameter(torch.full((input_dim,), math.log(period)))
 

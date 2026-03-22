@@ -24,22 +24,22 @@
 
 ## 1. 安装
 
-推荐使用 Python ≥ 3.10 的独立虚拟环境。完整依赖列表以 `pyproject.toml` 为准。
+推荐使用 Python 3.10 的 Miniconda/Conda 环境。完整依赖列表以 `pyproject.toml` 为准。
 
 ```bash
-python -m venv .venv
-source .venv/bin/activate
-pip install --upgrade pip
-pip install "torch>=2.2.0,<2.3.0" "pyro-ppl>=1.9.1,<1.10" numpy pyyaml typer rich
-pip install -e .
+conda env create -f environment.yml
+conda activate gp-ssm
 ```
 
-`pip install -e .` 会以「可编辑模式」安装 `gp-ssm`，直接暴露 `src/` 里的所有模块。
+`environment.yml` 会安装运行与开发依赖，并在最后执行 `pip install -e .`，以「可编辑模式」注册 `gp-ssm`，直接暴露 `src/` 里的所有模块。
 
-如需复现实验或运行测试，可安装开发依赖：
+如果你想在现有 conda 环境中手动安装：
 
 ```bash
+pip install --upgrade pip
+pip install "torch>=2.2.0,<2.3.0" "pyro-ppl>=1.9.1,<1.10" numpy pyyaml typer rich
 pip install pytest black ruff mypy
+pip install -e .
 ```
 
 ---
@@ -54,15 +54,16 @@ python scripts/train_gp_ssm.py train --config configs/default.yaml
 
 - 脚本会自动选择可用的 **MPS / CUDA / CPU**，并在终端打印设备信息。
 - `--config` 可以指向任意 YAML 文件，例如 `configs/system_id_medium.yaml` 用于更接近系统辨识的场景。
-- 训练过程中每隔 `eval_every` 步会在验证集上评估 **RMSE / NLL**；训练结束后会再次在验证集和测试集上评估，并打印一次多步前滚预测的 **RMSE**。
+- 训练过程中每隔 `eval_every` 步会在验证集上评估 **RMSE / reconstruction NLL / predictive log-likelihood**；训练结束后会再次在验证集和测试集上评估，并打印一次多步前滚预测的 **RMSE**。
+- 如果要从 checkpoint 继续训练，可传入 `--resume-from path/to/final.pt`；恢复后会沿用保存的 Pyro param store，并额外执行 `trainer.steps` 个优化步。
 
 ### 评估与预测
 
 训练相关的评估工具可以在自定义脚本中直接复用：
 
 - `training.evaluation.evaluate_model(model, loader)`
-  计算观测 RMSE、NLL，以及在提供 latent 真值时的 latent RMSE。
-- `training.evaluation.rollout_forecast(model, y_hist, lengths, steps, num_samples=64, return_std=True)`
+  计算观测 RMSE、reconstruction NLL、held-out predictive log-likelihood/NLL，以及在提供 latent 真值时的 latent RMSE。
+- `training.evaluation.rollout_forecast(model, y_hist, lengths, steps, controls=None, num_samples=64, return_std=True)`
   默认用 Monte Carlo 抽样传播 GP 转移 + 过程噪声，并叠加观测噪声，返回预测均值与标准差（也可返回完整样本）。将 `return_std=False` 可保持旧的仅均值张量行为；`moment_matching=True` 时启用仿射观测头下的矩匹配近似。
 
 可选的结构化变分后验：
@@ -142,19 +143,20 @@ $$
 - **Toy 模型**：`generate_synthetic_sequences` 使用正弦漂移 + 线性观测，适合快速验证实现与指标计算。
 - **系统辨识场景**：`generate_system_identification_sequences` 模拟控制信号、非线性 drift、过程/观测噪声，与实际控制系统更接近。
 
-两者都返回带有观测、长度与可选 latent 的 `SequenceDataset`。
+两者都返回带有观测、长度、可选 latent 和可选 control 的 `SequenceDataset`。
 噪声参数（`process_noise`、`obs_noise`）表示**标准差**而不是方差。
 
 ### 划分与窗口化
 
 - `split_dataset(dataset, (train, val, test), seed)` 按比例随机划分序列，seed 可重复实验。
-- `TimeseriesWindowDataset` 根据长度对序列做固定窗口采样，自动补零和生成长度 mask，latent（如存在）也会与窗口对齐。
-- `build_dataloader` 将其封装为 `torch.utils.data.DataLoader`，输出包含 `y`、`lengths` 与可选 `latents` 的批次。
+- `TimeseriesWindowDataset` 根据长度对序列做固定窗口采样，自动补零和生成长度 mask，latent / control（如存在）也会与窗口对齐。
+- `build_dataloader` 将其封装为 `torch.utils.data.DataLoader`，输出包含 `y`、`lengths` 与可选 `latents` / `controls` 的批次。
 
 ### 评估指标
 
 - **RMSE**：观测值的均方根误差（按长度 mask）。
-- **NLL**：在模型估计的观测噪声下的高斯负对数似然。
+- **Reconstruction NLL**：基于 encoder 后验均值与模型观测噪声计算的高斯重建负对数似然。
+- **Predictive log-likelihood / NLL**：给定 context 段后，对未来 horizon 做 Monte Carlo 后验预测得到的 held-out 概率指标。
 - **Latent RMSE**：在存在 latent 真值时的隐状态 RMSE。
 - **Forecast RMSE**：使用 `rollout_forecast` 在给定 context 与 horizon 下计算的多步预测误差（在训练脚本中示例）。
 
@@ -181,9 +183,9 @@ $$
 
   若需自定义，实现 `models.kernels.Kernel` 抽象类的 `forward` 与 `diag` 方法即可，并在配置里引用新的 `type` 名称。
 - **Observation / Encoder 自定义**：可以用任意 PyTorch / PyroModule 作为观测头或编码器，例如图像任务中的 CNN 解码器，或长序列任务中的 Transformer 编码器。
-- **控制输入建模**：在转移模型输入中拼接 `(x_t, u_t)` 即可支持受控系统；系统辨识数据生成器已经包含控制信号，可直接利用。
+- **控制输入建模**：受控数据集现在可以端到端携带 `controls` 张量；存在控制输入时，GP 转移会自动拼接 `(x_t, u_t)`。
 - **多配置实验**：在 `configs/` 下添加新的 YAML 文件来定义实验（状态维度、诱导点个数、窗口长度、噪声尺度等），训练脚本会自动读取。
-- **Checkpoint 恢复**：`SVITrainer` 会在 `checkpoint_dir` 下保存 `final.pt`，可通过 `pyro.get_param_store().load_state_dict` 恢复参数并继续训练或单独评估。
+- **Checkpoint 恢复**：`SVITrainer` 会在 `checkpoint_dir` 下保存 `final.pt`。全新训练由 CLI 显式清空 param store；恢复训练可直接使用 `python scripts/train_gp_ssm.py train --config ... --resume-from path/to/final.pt`。
 
 ---
 

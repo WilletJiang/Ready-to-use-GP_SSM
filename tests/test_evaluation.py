@@ -23,9 +23,9 @@ class _DummyTransition(torch.nn.Module):
     def precompute(self, _u):
         return None
 
-    def forward(self, x_prev, _u, _cache=None):
-        # Identity dynamics with small state variance
-        mean = x_prev
+    def forward(self, x_prev, _u, _cache=None, controls=None):
+        # Identity dynamics with optional additive control and small state variance
+        mean = x_prev if controls is None else x_prev + controls
         var = torch.full_like(x_prev, 1e-3)
         return mean, var
 
@@ -47,14 +47,18 @@ class _DummyEncoder:
         init_scale = torch.zeros_like(init_loc)
         scale = torch.zeros_like(y)
         shifted = torch.cat([y[:, 1:, :], y[:, -1:, :]], dim=1)
-        return type("EncOut", (), {
-            "init_loc": init_loc,
-            "init_scale": init_scale,
-            "loc": shifted,
-            "scale": scale,
-            "trans_matrix": None,
-            "trans_bias": None,
-        })()
+        return type(
+            "EncOut",
+            (),
+            {
+                "init_loc": init_loc,
+                "init_scale": init_scale,
+                "loc": shifted,
+                "scale": scale,
+                "trans_matrix": None,
+                "trans_bias": None,
+            },
+        )()
 
 
 class _DummyModel(torch.nn.Module):
@@ -108,21 +112,35 @@ def test_evaluate_model_runs_with_variable_lengths() -> None:
     )
     loader = build_dataloader(dataset, batch_size=3, shuffle=False)
 
-    metrics = evaluate_model(model, loader)
+    metrics = evaluate_model(
+        model,
+        loader,
+        predictive_horizon=2,
+        predictive_num_samples=8,
+    )
 
-    assert set(metrics) >= {"rmse", "nll"}
+    assert set(metrics) >= {
+        "rmse",
+        "reconstruction_nll",
+        "predictive_loglik",
+        "predictive_nll",
+    }
     assert math.isfinite(metrics["rmse"])
-    assert math.isfinite(metrics["nll"])
+    assert math.isfinite(metrics["reconstruction_nll"])
+    assert math.isfinite(metrics["predictive_loglik"])
+    assert math.isfinite(metrics["predictive_nll"])
 
 
 def test_rollout_forecast_sampling_returns_uncertainty_and_respects_lengths() -> None:
     torch.manual_seed(0)
     model = _DummyModel()
     # Two sequences, second is padded after length 2
-    y_hist = torch.tensor([
-        [[1.0], [2.0], [3.0]],
-        [[10.0], [20.0], [0.0]],
-    ])
+    y_hist = torch.tensor(
+        [
+            [[1.0], [2.0], [3.0]],
+            [[10.0], [20.0], [0.0]],
+        ]
+    )
     lengths = torch.tensor([3, 2])
     result = rollout_forecast(
         model,
@@ -164,3 +182,23 @@ def test_rollout_forecast_samples_without_std_returns_mean_and_samples() -> None
     assert "std" not in result
     assert result["mean"].shape == (1, 1, 1)
     assert result["samples"].shape == (8, 1, 1, 1)
+
+
+def test_rollout_forecast_uses_future_controls() -> None:
+    torch.manual_seed(2)
+    model = _DummyModel()
+    y_hist = torch.tensor([[[1.0], [2.0]]])
+    lengths = torch.tensor([2])
+    controls = torch.tensor([[[3.0], [4.0]]])
+    result = rollout_forecast(
+        model,
+        y_hist,
+        lengths,
+        steps=2,
+        controls=controls,
+        num_samples=64,
+        return_std=True,
+    )
+    mean = result["mean"]
+    assert mean.shape == (1, 2, 1)
+    assert torch.isclose(mean[0, 0, 0], torch.tensor(5.0), atol=0.5)
