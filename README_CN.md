@@ -55,7 +55,7 @@ python scripts/train_gp_ssm.py train --config configs/default.yaml
 - 脚本会自动选择可用的 **MPS / CUDA / CPU**，并在终端打印设备信息。
 - `--config` 可以指向任意 YAML 文件，例如 `configs/system_id_medium.yaml` 用于更接近系统辨识的场景。
 - 训练过程中每隔 `eval_every` 步会在验证集上评估 **RMSE / reconstruction NLL / predictive log-likelihood**；训练结束后会再次在验证集和测试集上评估，并打印一次多步前滚预测的 **RMSE**。
-- 如果要从 checkpoint 继续训练，可传入 `--resume-from path/to/final.pt`；恢复后会沿用保存的 Pyro param store，并额外执行 `trainer.steps` 个优化步。
+- 如果要从 checkpoint 继续训练，可传入 `--resume-from path/to/final.pt`；恢复后会同时还原保存的 Pyro param store 与优化器状态，并额外执行 `trainer.steps` 个优化步。
 
 ### 评估与预测
 
@@ -185,7 +185,7 @@ $$
 - **Observation / Encoder 自定义**：可以用任意 PyTorch / PyroModule 作为观测头或编码器，例如图像任务中的 CNN 解码器，或长序列任务中的 Transformer 编码器。
 - **控制输入建模**：受控数据集现在可以端到端携带 `controls` 张量；存在控制输入时，GP 转移会自动拼接 `(x_t, u_t)`。
 - **多配置实验**：在 `configs/` 下添加新的 YAML 文件来定义实验（状态维度、诱导点个数、窗口长度、噪声尺度等），训练脚本会自动读取。
-- **Checkpoint 恢复**：`SVITrainer` 会在 `checkpoint_dir` 下保存 `final.pt`。全新训练由 CLI 显式清空 param store；恢复训练可直接使用 `python scripts/train_gp_ssm.py train --config ... --resume-from path/to/final.pt`。
+- **Checkpoint 恢复**：`SVITrainer` 会在 `checkpoint_dir` 下保存 `final.pt`，其中包含兼容 `weights_only=True` 的 Pyro param store 副本、优化器状态以及 RNG 状态。全新训练由 CLI 显式清空 param store；恢复训练可直接使用 `python scripts/train_gp_ssm.py train --config ... --resume-from path/to/final.pt`。
 
 ---
 
