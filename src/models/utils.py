@@ -4,6 +4,40 @@ import sys
 import warnings
 
 import torch
+from torch import Tensor
+
+
+def psd_safe_cholesky(
+    mat: Tensor,
+    jitter: float = 1e-6,
+    max_retries: int = 3,
+) -> Tensor:
+    """Cholesky decomposition with adaptive jitter on failure.
+
+    Tries the raw matrix first.  On ``RuntimeError`` (non-PD),
+    adds geometrically increasing diagonal jitter until the
+    decomposition succeeds or *max_retries* is exhausted.
+    """
+    try:
+        return torch.linalg.cholesky(mat)
+    except RuntimeError:
+        eye = torch.eye(mat.size(-1), device=mat.device, dtype=mat.dtype)
+        current = jitter
+        for _ in range(max_retries):
+            try:
+                result = torch.linalg.cholesky(mat + current * eye)
+                warnings.warn(
+                    f"psd_safe_cholesky: added jitter={current:.1e}",
+                    RuntimeWarning,
+                    stacklevel=2,
+                )
+                return result
+            except RuntimeError:
+                current *= 10.0
+        raise RuntimeError(
+            f"Matrix not positive-definite after {max_retries} "
+            f"jitter retries (max jitter={current:.1e})"
+        )
 
 
 def torch_compile(func):

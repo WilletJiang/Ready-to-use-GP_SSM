@@ -9,7 +9,7 @@ from pyro.nn import PyroModule
 from torch import Tensor, nn
 
 from .kernels import Kernel
-from .utils import torch_compile
+from .utils import psd_safe_cholesky, torch_compile
 
 
 @torch_compile
@@ -93,7 +93,7 @@ class SparseGPTransition(PyroModule):
         kzz = self.kernel(inducing, inducing)
         eye = self._eye.to(device=inducing.device, dtype=inducing.dtype)
         kzz = kzz + self.kernel.jitter * eye
-        chol = torch.linalg.cholesky(kzz)
+        chol = psd_safe_cholesky(kzz, jitter=self.kernel.jitter)
         return kzz, chol
 
     def precompute(
