@@ -14,7 +14,11 @@ _STD_NORMAL = None
 def _std_normal(device: torch.device, dtype: torch.dtype) -> Normal:
     """Lazily constructed standard normal (avoids device mismatches)."""
     global _STD_NORMAL
-    if _STD_NORMAL is None or _STD_NORMAL.loc.device != device:
+    if (
+        _STD_NORMAL is None
+        or _STD_NORMAL.loc.device != device
+        or _STD_NORMAL.loc.dtype != dtype
+    ):
         _STD_NORMAL = Normal(
             torch.zeros(1, device=device, dtype=dtype),
             torch.ones(1, device=device, dtype=dtype),

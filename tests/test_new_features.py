@@ -205,6 +205,70 @@ def test_cosine_lr_warmup_and_decay() -> None:
     assert trainer2._compute_lr(100) == cfg2.lr
 
 
+def test_cosine_lr_schedule_updates_optimizer_lr_after_steps(tmp_path) -> None:
+    from data.timeseries import (
+        TimeseriesWindowDataset,
+        build_dataloader,
+        generate_synthetic_sequences,
+    )
+    from models.encoder import StateEncoder
+    from models.gp_ssm import SparseVariationalGPSSM
+    from models.kernels import ARDRBFKernel
+    from models.transition import SparseGPTransition
+
+    pyro.clear_param_store()
+    torch.manual_seed(0)
+    kernel = ARDRBFKernel(input_dim=2)
+    transition = SparseGPTransition(state_dim=2, num_inducing=4, kernel=kernel)
+    encoder = StateEncoder(obs_dim=1, state_dim=2, hidden_size=8, num_layers=1)
+    model = SparseVariationalGPSSM(
+        transition=transition,
+        encoder=encoder,
+        observation=None,
+        obs_dim=1,
+        process_noise_init=0.1,
+        obs_noise_init=0.1,
+    )
+    synthetic = generate_synthetic_sequences(
+        num_sequences=4,
+        sequence_length=8,
+        state_dim=2,
+        obs_dim=1,
+        observation_gain=1.0,
+        process_noise=0.05,
+        obs_noise=0.05,
+    )
+    dataset = TimeseriesWindowDataset(
+        sequences=synthetic.observations,
+        lengths=synthetic.lengths,
+        window_length=4,
+        latents=synthetic.latents,
+    )
+    loader = build_dataloader(dataset, batch_size=2, shuffle=False)
+    trainer = SVITrainer(
+        model,
+        TrainerConfig(
+            steps=3,
+            lr=1e-2,
+            gradient_clip=5.0,
+            report_every=10,
+            checkpoint_dir=tmp_path,
+            elbo="trace",
+            eval_every=10,
+            lr_schedule="cosine",
+            lr_warmup_steps=1,
+            lr_min=1e-4,
+        ),
+    )
+    trainer.fit(loader)
+    lrs = {
+        param_group["lr"]
+        for optim in trainer.svi.optim.optim_objs.values()
+        for param_group in optim.param_groups
+    }
+    assert lrs == {trainer._compute_lr(3)}
+
+
 # ---------------------------------------------------------------------------
 # 4. Gaussian CRPS metric
 # ---------------------------------------------------------------------------
@@ -255,6 +319,21 @@ def test_crps_non_negative() -> None:
     target = torch.randn(100)
     crps = gaussian_crps(mean, std, target)
     assert torch.all(crps >= -1e-6)
+
+
+def test_crps_cache_handles_dtype_switches() -> None:
+    mean32 = torch.zeros(2, dtype=torch.float32)
+    std32 = torch.ones(2, dtype=torch.float32)
+    target32 = torch.zeros(2, dtype=torch.float32)
+    crps32 = gaussian_crps(mean32, std32, target32)
+
+    mean64 = torch.zeros(2, dtype=torch.float64)
+    std64 = torch.ones(2, dtype=torch.float64)
+    target64 = torch.zeros(2, dtype=torch.float64)
+    crps64 = gaussian_crps(mean64, std64, target64)
+
+    assert crps32.dtype == torch.float32
+    assert crps64.dtype == torch.float64
 
 
 def test_crps_in_evaluate_model() -> None:

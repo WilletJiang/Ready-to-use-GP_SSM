@@ -3,7 +3,7 @@ from __future__ import annotations
 import os
 from functools import partial
 from pathlib import Path
-from typing import Any, Dict, Tuple, Optional
+from typing import Any, Dict, Optional, Tuple
 
 os.environ.setdefault("PYTORCH_ENABLE_MPS_FALLBACK", "1")
 
@@ -121,23 +121,6 @@ def _build_kernel_from_config(
         return ProductKernel(kernels=components, jitter=jitter)
     msg = f"Unknown kernel type: {kernel_type}"
     raise ValueError(msg)
-
-
-def _load_checkpoint(path: Path) -> int:
-    checkpoint = torch.load(path, map_location="cpu")
-    if not isinstance(checkpoint, dict):
-        msg = "Checkpoint must be a dictionary"
-        raise ValueError(msg)
-    params = checkpoint.get("params")
-    if params is None:
-        msg = "Checkpoint is missing 'params'"
-        raise ValueError(msg)
-    pyro.get_param_store().set_state(params)
-    step = checkpoint.get("step", 0)
-    if not isinstance(step, int) or step < 0:
-        msg = "Checkpoint 'step' must be a non-negative integer"
-        raise ValueError(msg)
-    return step
 
 
 @app.command()
@@ -299,7 +282,7 @@ def train(
         pyro.clear_param_store()
         start_step = 0
     else:
-        start_step = _load_checkpoint(resume_from)
+        start_step = trainer.load_checkpoint(resume_from, device=device)
         console.print(
             f"Resuming from checkpoint: {resume_from} (step={start_step})",
             style="bold yellow",

@@ -6,7 +6,8 @@ import pyro
 import torch
 from pyro import distributions as dist, poutine
 from pyro.distributions import constraints
-from pyro.nn import PyroModule, PyroParam
+from pyro.nn import PyroModule, PyroParam, pyro_method
+from pyro.params.param_store import param_with_module_name
 from torch import Tensor
 
 from .encoder import StateEncoder
@@ -77,15 +78,52 @@ class SparseVariationalGPSSM(PyroModule):
             msg = "controls feature dimension must match transition.control_dim"
             raise ValueError(msg)
 
+    def _sync_named_parameters_from_param_store(
+        self,
+        prefix: str,
+        module,
+    ) -> None:
+        store = pyro.get_param_store()
+        recurse = prefix != ""
+        for param_name, param in module.named_parameters(recurse=recurse):
+            full_name = (
+                param_name
+                if not prefix
+                else param_with_module_name(prefix, param_name)
+            )
+            if full_name not in store._params:
+                continue
+            store_param = store._params[full_name]
+            if store_param.shape != param.shape:
+                msg = f"Loaded parameter '{full_name}' has incompatible shape"
+                raise ValueError(msg)
+            if "." in param_name:
+                module_name, leaf_name = param_name.rsplit(".", 1)
+                target_module = module
+                for part in module_name.split("."):
+                    target_module = getattr(target_module, part)
+            else:
+                target_module = module
+                leaf_name = param_name
+            # Rebind to the ParamStore-backed Parameter object so gradients,
+            # optimizer state, and future checkpoint writes stay in sync.
+            target_module._parameters[leaf_name] = store_param
+
+    def sync_from_param_store(self) -> None:
+        # Pyro's ParamStore is the serialization source of truth, but the live
+        # nn.Module parameters still need their data copied in after a restore.
+        self._sync_named_parameters_from_param_store("", self)
+        self._sync_named_parameters_from_param_store("observation", self.observation)
+        self._sync_named_parameters_from_param_store("transition", self.transition)
+        self._sync_named_parameters_from_param_store("encoder", self.encoder)
+
+    @pyro_method
     def model(
         self,
         y: Tensor,
         lengths: Optional[Tensor] = None,
         controls: Optional[Tensor] = None,
     ) -> None:
-        pyro.module("observation", self.observation)
-        pyro.module("transition", self.transition)
-        pyro.module("encoder", self.encoder)
         self._validate_controls(y, controls)
         batch_size, horizon, _ = y.shape
         prior_dist, chol = self.transition.prior(return_chol=True)
@@ -130,15 +168,13 @@ class SparseVariationalGPSSM(PyroModule):
                         )
                 x_prev = x_curr
 
+    @pyro_method
     def guide(
         self,
         y: Tensor,
         lengths: Optional[Tensor] = None,
         controls: Optional[Tensor] = None,
     ) -> None:
-        pyro.module("observation", self.observation)
-        pyro.module("transition", self.transition)
-        pyro.module("encoder", self.encoder)
         self._validate_controls(y, controls)
         pyro.sample(
             "u",

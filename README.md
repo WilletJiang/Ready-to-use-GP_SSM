@@ -59,7 +59,7 @@ python scripts/train_gp_ssm.py train --config configs/default.yaml
 - The script automatically selects **MPS / CUDA / CPU** depending on availability and prints the device.
 - `--config` can be any YAML file; see `configs/system_id_medium.yaml` for a system-identification setting.
 - During training the script periodically reports **RMSE / reconstruction NLL / predictive log-likelihood** on the validation split and, at the end, evaluates both validation and test sets and prints a **rollout forecast RMSE**.
-- To continue from a saved checkpoint, pass `--resume-from path/to/final.pt`. The resumed run keeps the saved Pyro param store and executes `trainer.steps` additional optimization steps.
+- To continue from a saved checkpoint, pass `--resume-from path/to/final.pt`. The resumed run restores both the saved Pyro param store and optimizer state, then executes `trainer.steps` additional optimization steps.
 
 ### Evaluate & forecast
 
@@ -179,7 +179,7 @@ The code is designed to be modified:
 - **Custom observation / encoder.** Any PyTorch / PyroModule can be used as the observation head or encoder. For example, you can plug in a CNN-based decoder for images or a Transformer encoder for long, irregular sequences.
 - **Control inputs.** Controlled datasets can now carry optional `controls` tensors end-to-end; the GP transition consumes concatenated `(x_t, u_t)` automatically when controls are present.
 - **New experiment configs.** Add YAML files under `configs/` to define new experimental regimes (state dimension, number of inducing points, window length, noise scales, etc.). The training script reads these without changes.
-- **Checkpointing & continuation.** `SVITrainer` saves a `final.pt` checkpoint containing the Pyro parameter store. Fresh training jobs clear the param store explicitly; continuation is supported directly via `python scripts/train_gp_ssm.py train --config ... --resume-from path/to/final.pt`.
+- **Checkpointing & continuation.** `SVITrainer` saves a `final.pt` checkpoint containing a weights-only-compatible copy of the Pyro parameter store, optimizer state, and RNG state. Fresh training jobs clear the param store explicitly; continuation is supported directly via `python scripts/train_gp_ssm.py train --config ... --resume-from path/to/final.pt`.
 
 ---
 
