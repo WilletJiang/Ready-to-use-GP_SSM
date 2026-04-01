@@ -302,6 +302,83 @@ class SumKernel(Kernel):
         return kzz + self.jitter * eye
 
 
+@torch_compile
+def _sm_forward_impl(
+    x: Tensor,
+    y: Tensor,
+    weights: Tensor,
+    means: Tensor,
+    variances: Tensor,
+) -> Tensor:
+    """Spectral Mixture kernel forward (Wilson & Adams, 2013).
+
+    Implements the product-of-dimensions form derived from Bochner's theorem:
+      k(x,y) = Σ_q w_q · Π_d exp(-2π²τ_d²v_{q,d}) · cos(2πτ_d μ_{q,d})
+    where τ = x - y.
+    """
+    tau = x.unsqueeze(-2) - y.unsqueeze(-3)  # [N, M, D]
+    two_pi_sq = 2.0 * math.pi ** 2
+    two_pi = 2.0 * math.pi
+
+    # Exp component: exp(-2π² Σ_d τ_d² v_{q,d})  —  contract over D
+    exp_arg = tau.pow(2) @ variances.T  # [N, M, Q]
+    exp_component = torch.exp(-two_pi_sq * exp_arg)
+
+    # Cos component: Π_d cos(2πτ_d μ_{q,d})  —  product over D
+    cos_arg = two_pi * tau.unsqueeze(-2) * means  # [N, M, Q, D]
+    cos_component = torch.cos(cos_arg).prod(dim=-1)  # [N, M, Q]
+
+    return (weights * exp_component * cos_component).sum(dim=-1)
+
+
+class SpectralMixtureKernel(Kernel):
+    """Spectral Mixture kernel (Wilson & Adams, 2013).
+
+    Models any stationary covariance via a mixture of Q Gaussian
+    spectral densities — the most expressive kernel family justified
+    by Bochner's theorem.  Each component captures a characteristic
+    frequency (mean) with a bandwidth (variance) at a given magnitude
+    (weight).
+    """
+
+    def __init__(
+        self,
+        input_dim: int,
+        num_mixtures: int = 4,
+        jitter: float = 1e-5,
+    ) -> None:
+        if num_mixtures <= 0:
+            msg = "num_mixtures must be positive"
+            raise ValueError(msg)
+        super().__init__(input_dim=input_dim, jitter=jitter)
+        self.num_mixtures = num_mixtures
+        self.log_weights = nn.Parameter(torch.zeros(num_mixtures))
+        # Frequencies are unconstrained: cos is even so sign is redundant,
+        # and this avoids exp-overflow (CodeX review finding).
+        self.raw_means = nn.Parameter(torch.randn(num_mixtures, input_dim) * 0.5)
+        self.log_variances = nn.Parameter(torch.zeros(num_mixtures, input_dim))
+
+    @property
+    def weights(self) -> Tensor:
+        return self.log_weights.exp()
+
+    @property
+    def means(self) -> Tensor:
+        return self.raw_means
+
+    @property
+    def variances(self) -> Tensor:
+        return self.log_variances.exp()
+
+    def forward(self, x: Tensor, y: Tensor) -> Tensor:
+        self._validate_pair(x, y)
+        return _sm_forward_impl(x, y, self.weights, self.means, self.variances)
+
+    def diag(self, x: Tensor) -> Tensor:
+        self._validate_single(x)
+        return self.weights.sum().expand(x.shape[:-1])
+
+
 class ProductKernel(Kernel):
     def __init__(self, kernels: Sequence[Kernel], jitter: float = 1e-5) -> None:
         if not kernels:
@@ -339,6 +416,7 @@ __all__ = [
     "MaternKernel",
     "RationalQuadraticKernel",
     "PeriodicKernel",
+    "SpectralMixtureKernel",
     "SumKernel",
     "ProductKernel",
 ]

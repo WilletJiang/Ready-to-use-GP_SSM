@@ -30,6 +30,7 @@ from models.kernels import (
     PeriodicKernel,
     ProductKernel,
     RationalQuadraticKernel,
+    SpectralMixtureKernel,
     SumKernel,
 )
 from models.transition import SparseGPTransition
@@ -98,6 +99,13 @@ def _build_kernel_from_config(
             jitter=jitter,
             period=period,
             lengthscale=lengthscale,
+        )
+    if kernel_type == "spectral_mixture":
+        num_mixtures = params.get("num_mixtures", 4)
+        return SpectralMixtureKernel(
+            input_dim=input_dim,
+            num_mixtures=num_mixtures,
+            jitter=jitter,
         )
     if kernel_type in {"sum", "product"}:
         components_cfg = cfg.get("components")
@@ -282,6 +290,9 @@ def train(
             checkpoint_dir=Path(trainer_cfg["checkpoint_dir"]),
             elbo=trainer_cfg["elbo"],
             eval_every=trainer_cfg["eval_every"],
+            lr_schedule=trainer_cfg.get("lr_schedule", "constant"),
+            lr_warmup_steps=trainer_cfg.get("lr_warmup_steps", 0),
+            lr_min=trainer_cfg.get("lr_min", 1e-6),
         ),
     )
     if resume_from is None:

@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import math
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Callable, Dict, Iterable, List, Optional
@@ -21,6 +22,9 @@ class TrainerConfig:
     checkpoint_dir: Path
     elbo: str
     eval_every: int
+    lr_schedule: str = "constant"
+    lr_warmup_steps: int = 0
+    lr_min: float = 1e-6
 
 
 class SVITrainer:
@@ -41,6 +45,25 @@ class SVITrainer:
             return TraceMeanField_ELBO()
         msg = f"Unknown ELBO type: {elbo_name}"
         raise ValueError(msg)
+
+    def _compute_lr(self, offset: int) -> float:
+        """Return learning rate for the given *offset* (1-based within run)."""
+        cfg = self.config
+        if cfg.lr_schedule == "constant":
+            return cfg.lr
+        if cfg.lr_schedule != "cosine":
+            msg = f"Unknown lr_schedule: {cfg.lr_schedule}"
+            raise ValueError(msg)
+        warmup = cfg.lr_warmup_steps
+        if offset <= warmup:
+            return cfg.lr_min + (cfg.lr - cfg.lr_min) * offset / max(warmup, 1)
+        progress = (offset - warmup) / max(cfg.steps - warmup, 1)
+        return cfg.lr_min + 0.5 * (cfg.lr - cfg.lr_min) * (1 + math.cos(math.pi * progress))
+
+    def _set_lr(self, lr: float) -> None:
+        for opt in self.svi.optim.optim_objs.values():
+            for pg in opt.param_groups:
+                pg["lr"] = lr
 
     def _batch_stream(self, loader: DataLoader) -> Iterable[Dict[str, torch.Tensor]]:
         while True:
@@ -79,6 +102,8 @@ class SVITrainer:
                     controls = controls.to(device)
 
                 loss = self.svi.step(y, lengths, controls)
+                if self.config.lr_schedule != "constant":
+                    self._set_lr(self._compute_lr(offset))
                 progress.advance(task)
                 if step % self.config.report_every == 0:
                     progress.log(f"step={step} loss={loss:.2f}")

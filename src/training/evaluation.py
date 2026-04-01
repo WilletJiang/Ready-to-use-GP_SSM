@@ -7,6 +7,35 @@ import torch
 from torch import Tensor
 from torch.distributions import MultivariateNormal, Normal
 
+_SQRT_PI_INV = 1.0 / math.sqrt(math.pi)
+_STD_NORMAL = None
+
+
+def _std_normal(device: torch.device, dtype: torch.dtype) -> Normal:
+    """Lazily constructed standard normal (avoids device mismatches)."""
+    global _STD_NORMAL
+    if _STD_NORMAL is None or _STD_NORMAL.loc.device != device:
+        _STD_NORMAL = Normal(
+            torch.zeros(1, device=device, dtype=dtype),
+            torch.ones(1, device=device, dtype=dtype),
+        )
+    return _STD_NORMAL
+
+
+def gaussian_crps(mean: Tensor, std: Tensor, target: Tensor) -> Tensor:
+    """Closed-form CRPS for a Gaussian predictive distribution.
+
+    CRPS(N(μ,σ²), y) = σ [z(2Φ(z)−1) + 2φ(z) − 1/√π]
+    where z = (y−μ)/σ.
+
+    Returns element-wise CRPS with the same shape as *target*.
+    """
+    z = (target - mean) / std.clamp_min(1e-12)
+    sn = _std_normal(z.device, z.dtype)
+    phi = sn.log_prob(z).exp()
+    big_phi = sn.cdf(z)
+    return std * (z * (2.0 * big_phi - 1.0) + 2.0 * phi - _SQRT_PI_INV)
+
 
 def _mask_from_lengths(lengths: Tensor, horizon: int) -> Tensor:
     device = lengths.device
@@ -234,6 +263,7 @@ def evaluate_model(
     model.eval()
     rmse_sum = 0.0
     reconstruction_nll_sum = 0.0
+    crps_sum = 0.0
     obs_count = 0
     latent_rmse_sum = 0.0
     latent_count = 0
@@ -272,6 +302,9 @@ def evaluate_model(
             log_norm = torch.log(2 * math.pi * var)
             reconstruction_nll = 0.5 * (diff.pow(2) / var + log_norm)
             reconstruction_nll_sum += (reconstruction_nll * mask).sum().item()
+            obs_noise_expanded = obs_noise.expand_as(y)
+            crps_vals = gaussian_crps(obs_pred, obs_noise_expanded, y)
+            crps_sum += (crps_vals * mask).sum().item()
             if "latents" in batch:
                 lat = batch["latents"].to(device)
                 latent_diff = state_mean - lat
@@ -294,6 +327,7 @@ def evaluate_model(
     metrics = {
         "rmse": math.sqrt(rmse_sum / max(obs_count, 1)),
         "reconstruction_nll": reconstruction_nll_sum / max(obs_count, 1),
+        "crps": crps_sum / max(obs_count, 1),
     }
     if predictive_obs_count > 0:
         avg_predictive_loglik = predictive_loglik_sum / predictive_obs_count
